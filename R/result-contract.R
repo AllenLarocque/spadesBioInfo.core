@@ -2,13 +2,14 @@
 #' @export
 standardCoefColumns <- function() {
   c("response","term","estimate","std_error","statistic","df","p_value",
-    "conf_low","conf_high","model_id","family","link","random_effects","formula")
+    "conf_low","conf_high","model_id","family","link","structure",
+    "random_effects","formula")
 }
 
 #' Required columns of the tidy `glance` result table (one row per fitted model).
 #' @export
 standardGlanceColumns <- function() {
-  c("model_id","response","family","link","random_effects","formula",
+  c("model_id","response","family","link","structure","random_effects","formula",
     "n_obs","converged","logLik","AIC","BIC","R2_marginal","R2_conditional")
 }
 
