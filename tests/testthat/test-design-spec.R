@@ -53,9 +53,50 @@ test_that("mlPredictors drops the response itself and its declared exclusions", 
   expect_setequal(mlPredictors(ds, "CN_ratio", ev), c("treatment","bulk_density"))
 })
 
-test_that("designSpec validates scope, transform, and rejects non-gaussian family", {
+test_that("designSpec validates scope and transform", {
   expect_error(designSpec(list(x = list(scope = "nope")), list(f = ~ treatment)), "scope")
   expect_error(designSpec(list(x = list(transform = "cube")), list(f = ~ treatment)), "transform")
-  expect_error(designSpec(list(x = list(family = "poisson")), list(f = ~ treatment)),
-               "only gaussian is wired")
+})
+
+test_that("supportedFamilies registry lists engines (default first) + default link", {
+  fam <- supportedFamilies()
+  expect_true(all(c("gaussian","poisson","nbinom","beta","nbinom2") %in% names(fam)))
+  expect_identical(fam$gaussian$engines[[1]], "lme4")
+  expect_identical(fam$nbinom$engines, c("lme4","glmmTMB"))
+  expect_identical(fam$beta$engines, "glmmTMB")
+  expect_identical(fam$poisson$defaultLink, "log")
+})
+
+test_that("designSpec accepts non-gaussian families and defaults link from the registry", {
+  ds <- designSpec(list(depth = list(scope="whole", family="nbinom")),
+                   list(flat = ~ treatment))
+  fe <- responseFamilyEngine(ds, "depth")
+  expect_identical(fe$family, "nbinom")
+  expect_identical(fe$link, "log")        # registry default
+  expect_identical(fe$engine, "lme4")     # "auto" -> first engine
+  # gaussian back-compat: identity link, lme4
+  dg <- designSpec(c("Shannon"), list(flat = ~ treatment))
+  expect_identical(responseFamilyEngine(dg, "Shannon"),
+                   list(family="gaussian", link="identity", engine="lme4"))
+})
+
+test_that("engine override resolves when compatible and errors when not", {
+  ds <- designSpec(list(depth = list(family="nbinom", engine="glmmTMB")),
+                   list(flat = ~ treatment))
+  expect_identical(responseFamilyEngine(ds, "depth")$engine, "glmmTMB")
+  expect_error(
+    designSpec(list(b = list(family="beta", engine="lme4")), list(flat = ~ treatment)),
+    "compatible engines")
+})
+
+test_that("designSpec rejects unknown family and transform+non-gaussian", {
+  expect_error(designSpec(list(x=list(family="weibull")), list(f = ~ treatment)),
+               "supported families")
+  expect_error(designSpec(list(x=list(family="poisson", transform="log")), list(f = ~ treatment)),
+               "mutually exclusive")
+})
+
+test_that("responseSpec now carries engine", {
+  ds <- designSpec(list(d=list(family="nbinom", engine="glmmTMB")), list(f = ~ treatment))
+  expect_identical(responseSpec(ds, "d")$engine, "glmmTMB")
 })
