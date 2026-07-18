@@ -31,6 +31,15 @@ test_that("filterByTaxon fails loud on a missing rank and NA is treated as not-k
   expect_error(filterByTaxon(makeMixedPS(), rank = "Domain", keep = "Bacteria"), "Domain")
 })
 
+test_that("filterByTaxon returns ps = NULL (not a crash) when the whitelist matches zero taxa", {
+  # No taxon has Kingdom == "Bacteria" -> every taxon dropped. phyloseq cannot represent a
+  # 0-taxa otu_table, so prune_taxa(all-FALSE) would error; the contract is ps = NULL instead.
+  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Bacteria"))
+  expect_null(res$ps)
+  expect_setequal(res$excluded$taxon, paste0("ASV", 1:5))   # all five recorded as dropped
+  expect_true(all(res$excluded$filter == "kingdom"))
+})
+
 test_that("filterByTaxon retains unassigned kingdoms when NA is whitelisted", {
   ps <- makeMixedPS()                                     # from earlier in this file
   phyloseq::tax_table(ps)["ASV1", "Kingdom"] <- NA        # make one Fungi row NA-kingdom

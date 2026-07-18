@@ -30,7 +30,9 @@ recordExcluded <- function(ps, keepLogical, filter) {
 #' Keep taxa whose value at a taxonomic `rank` is in `keep`; drop the rest.
 #'
 #' Generalises the kingdom whitelist (pass `rank = "Domain"` for SILVA 16S).
-#' @return list(ps = filtered phyloseq, excluded = audit data.frame).
+#' @return list(ps = filtered phyloseq, excluded = audit data.frame). `ps` is `NULL` when the
+#'   whitelist keeps ZERO taxa (phyloseq cannot hold a 0-taxa object) — callers must guard
+#'   `is.null(res$ps)` before `phyloseq::ntaxa()`. Mirrors [filterByPrevalence()].
 #' @export
 filterByTaxon <- function(ps, rank = "Kingdom", keep) {
   tax <- as.data.frame(unclass(phyloseq::tax_table(ps)), stringsAsFactors = FALSE)
@@ -38,7 +40,8 @@ filterByTaxon <- function(ps, rank = "Kingdom", keep) {
     stop("filterByTaxon: rank '", rank, "' is not a tax_table column.")
   keepLogical <- tax[[rank]] %in% keep                # NA -> FALSE unless NA in `keep`
   excluded <- recordExcluded(ps, keepLogical, tolower(rank))
-  list(ps = phyloseq::prune_taxa(keepLogical, ps), excluded = excluded)
+  list(ps = if (any(keepLogical)) phyloseq::prune_taxa(keepLogical, ps) else NULL,
+       excluded = excluded)
 }
 
 #' Keep taxa present in >= `minPrevalence` samples AND with total abundance
