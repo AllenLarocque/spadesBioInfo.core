@@ -28,6 +28,7 @@ designSpec <- function(responses, structures, family = "gaussian", link = "ident
     transform <- sp$transform
     exclude   <- if (is.null(sp$exclude)) character(0) else sp$exclude
     engine    <- if (is.null(sp$engine)) "auto" else sp$engine
+    theme     <- if (is.null(sp$theme)) NA_character_ else as.character(sp$theme)
     if (!scope %in% c("bySubset", "whole"))
       stop("response '", nm, "': scope must be 'bySubset' or 'whole'.")
     if (!is.null(transform) && !transform %in% okTransform)
@@ -44,7 +45,7 @@ designSpec <- function(responses, structures, family = "gaussian", link = "ident
     resolvedEngine <- if (identical(engine, "auto")) engines[[1]] else engine
     lnk <- if (is.null(sp$link)) registry[[fam]]$defaultLink else sp$link
     list(scope = scope, family = fam, link = lnk, transform = transform,
-         exclude = exclude, engine = resolvedEngine)
+         exclude = exclude, engine = resolvedEngine, theme = theme)
   })
   names(norm) <- names(responses)
 
@@ -98,7 +99,7 @@ responsesForSubset <- function(x, subsetName) {
 responseSpec <- function(x, name) {
   sp <- x$responses[[name]]
   if (is.null(sp)) stop("unknown response '", name, "'.")
-  sp[c("scope", "family", "link", "transform", "engine")]
+  sp[c("scope", "family", "link", "transform", "engine", "theme")]
 }
 
 #' ML predictor set for a response: explanatoryVars minus the response and its exclusions.
