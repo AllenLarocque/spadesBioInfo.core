@@ -44,7 +44,9 @@ filterByTaxon <- function(ps, rank = "Kingdom", keep) {
 #' Keep taxa present in >= `minPrevalence` samples AND with total abundance
 #' >= `minTotalAbundance`. Base-phyloseq equivalent of `microViz::tax_filter`;
 #' identical keep-set to the modules' copied `filterPhyloseq`.
-#' @return list(ps = filtered phyloseq, excluded = audit data.frame).
+#' @return list(ps = filtered phyloseq, excluded = audit data.frame). `ps` is `NULL` when the
+#'   filter keeps ZERO taxa (phyloseq cannot hold a 0-taxa object) — callers must guard
+#'   `is.null(res$ps)` before `phyloseq::ntaxa()`.
 #' @export
 filterByPrevalence <- function(ps, minPrevalence, minTotalAbundance) {
   otu <- as(phyloseq::otu_table(ps), "matrix")
@@ -52,7 +54,11 @@ filterByPrevalence <- function(ps, minPrevalence, minTotalAbundance) {
   keepLogical <- rowSums(otu > 0) >= minPrevalence &
                  rowSums(otu)      >= minTotalAbundance
   excluded <- recordExcluded(ps, keepLogical, "prevalence")
-  list(ps = phyloseq::prune_taxa(keepLogical, ps), excluded = excluded)
+  # phyloseq cannot represent a 0-taxa otu_table, so prune_taxa(all-FALSE, ps) errors. Signal the
+  # empty-community case with ps = NULL (callers guard is.null before ntaxa()); `excluded` still
+  # records every taxon as dropped.
+  list(ps = if (any(keepLogical)) phyloseq::prune_taxa(keepLogical, ps) else NULL,
+       excluded = excluded)
 }
 
 #' Aggregate an excluded-features table into a per-filter + total summary WITH

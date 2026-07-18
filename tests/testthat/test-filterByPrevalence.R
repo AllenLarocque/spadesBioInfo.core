@@ -15,6 +15,15 @@ test_that("filterByPrevalence keeps taxa >= minPrevalence AND >= minTotalAbundan
   expect_true(all(res$excluded$filter == "prevalence"))
 })
 
+test_that("filterByPrevalence returns ps=NULL (does NOT crash) when the filter keeps zero taxa", {
+  # phyloseq cannot represent a 0-taxa otu_table, so prune_taxa on an all-FALSE keep-set errors;
+  # filterByPrevalence must instead signal the empty-community case with ps = NULL.
+  res <- filterByPrevalence(makePrevPS(), minPrevalence = 99, minTotalAbundance = 99)
+  expect_null(res$ps)
+  expect_setequal(res$excluded$taxon, c("ASV1","ASV2","ASV3","ASV4"))  # all excluded, still recorded
+  expect_true(all(res$excluded$filter == "prevalence"))
+})
+
 test_that("filterByPrevalence matches the existing filterPhyloseq keep-set", {
   # inline the module's copied logic and assert identical taxa kept
   ps <- makePrevPS(); otu <- as(phyloseq::otu_table(ps), "matrix")
