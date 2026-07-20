@@ -18,7 +18,7 @@ projectPlotStyle <- function() {
     treatmentGradient = c("darkolivegreen", "chocolate4"),        # continuous green->brown endpoints
     # Disturbance encoding (treatment_continuous). MUST match prepCoreMetadata::deriveTreatment's
     # contMap — lets plots place categorical treatments on the continuous disturbance axis.
-    treatmentPositions = c(Control = 0, ST = 10, `60` = 40, `30` = 70, CC = 100),
+    treatmentPositions = c(Control = 0, `60` = 40, `30` = 70, ST = 90, CC = 100),
     referenceLine = "grey60"
   )
 }

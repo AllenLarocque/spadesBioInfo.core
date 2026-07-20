@@ -20,5 +20,5 @@ test_that("treatmentPalette warns + falls back for an unknown level", {
 test_that("projectPlotStyle carries the treatmentPositions disturbance map", {
   style <- projectPlotStyle()
   expect_equal(treatmentPositions(style),
-               c(Control = 0, ST = 10, `60` = 40, `30` = 70, CC = 100))
+               c(Control = 0, `60` = 40, `30` = 70, ST = 90, CC = 100))   # % cut; ST = 90
 })
