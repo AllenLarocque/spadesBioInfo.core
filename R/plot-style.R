@@ -16,6 +16,9 @@ projectPlotStyle <- function() {
                     "#0072B2", "#D55E00", "#CC79A7", "#000000"),
     diverging   = "Blue-Red 3",                    # colorspace diverging: blue = -, red = +
     treatmentGradient = c("darkolivegreen", "chocolate4"),        # continuous green->brown endpoints
+    # Disturbance encoding (treatment_continuous). MUST match prepCoreMetadata::deriveTreatment's
+    # contMap — lets plots place categorical treatments on the continuous disturbance axis.
+    treatmentPositions = c(Control = 0, ST = 10, `60` = 40, `30` = 70, CC = 100),
     referenceLine = "grey60"
   )
 }
@@ -53,3 +56,7 @@ divergingPalette <- function(style, n) colorspace::diverging_hcl(n, palette = st
 #' The colour for zero/reference lines and other neutral chrome.
 #' @export
 referenceLineColour <- function(style) style$referenceLine
+
+#' The disturbance-axis position (treatment_continuous encoding) of each treatment level.
+#' @export
+treatmentPositions <- function(style) style$treatmentPositions

@@ -16,3 +16,9 @@ test_that("treatmentPalette warns + falls back for an unknown level", {
   expect_equal(unname(p["Control"]), "darkolivegreen")
   expect_true(grepl("^#", p["BOGUS"]))                          # qualitative fallback hex
 })
+
+test_that("projectPlotStyle carries the treatmentPositions disturbance map", {
+  style <- projectPlotStyle()
+  expect_equal(treatmentPositions(style),
+               c(Control = 0, ST = 10, `60` = 40, `30` = 70, CC = 100))
+})
