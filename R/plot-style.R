@@ -9,9 +9,12 @@ projectPlotStyle <- function() {
             ggplot2::theme(plot.title = ggplot2::element_text(size = 11, face = "bold"),
                            legend.position = "right"),
     # Exact thesis hues, ordered by disturbance intensity (treatment_continuous): green (intact) ->
-    # brown (clearcut). Name-keyed so any subset of levels gets its correct hue.
-    treatmentColours = c(Control = "darkolivegreen", ST = "darkolivegreen3",
-                         `60` = "tan", `30` = "tan3", CC = "chocolate4"),
+    # brown (clearcut). Name-keyed so any subset of levels gets its correct hue. Hue order tracks
+    # treatmentPositions (% cut): Control(0) -> 60(40) -> 30(70) -> ST(90) -> CC(100). ST is 10%
+    # retention = 90% cut, so it sits at the brown end (tan3), next to CC — matching the thesis
+    # oracle (example_scripts .../Plots - RDA_fullmodel.R: "10% retention" = "tan3").
+    treatmentColours = c(Control = "darkolivegreen", `60` = "darkolivegreen3",
+                         `30` = "tan", ST = "tan3", CC = "chocolate4"),
     qualitative = c("#E69F00", "#56B4E9", "#009E73", "#F0E442",   # Okabe-Ito, colourblind-safe
                     "#0072B2", "#D55E00", "#CC79A7", "#000000"),
     diverging   = "Blue-Red 3",                    # colorspace diverging: blue = -, red = +

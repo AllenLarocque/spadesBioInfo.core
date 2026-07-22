@@ -3,7 +3,9 @@ test_that("projectPlotStyle exposes a theme + palettes; treatmentPalette is name
   expect_true(inherits(reviewTheme(style), c("theme", "gg")))
   expect_equal(treatmentPalette(style, c("Control", "CC")),
                c(Control = "darkolivegreen", CC = "chocolate4"))
-  expect_equal(unname(treatmentPalette(style, "30")), "tan3")   # subset keeps per-level hue
+  # Hue tracks the disturbance gradient (green->brown by % cut): 30 mid, ST at the brown end (near CC).
+  expect_equal(unname(treatmentPalette(style, "30")), "tan")    # subset keeps per-level hue
+  expect_equal(unname(treatmentPalette(style, "ST")), "tan3")   # ST = 90% cut -> brown end, next to CC
   q <- qualitativePalette(style, c("flat", "with_block"))
   expect_equal(names(q), c("flat", "with_block")); expect_true(all(grepl("^#", q)))
   expect_length(divergingPalette(style, 5), 5)
