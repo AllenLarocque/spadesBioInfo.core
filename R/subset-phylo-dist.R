@@ -6,7 +6,19 @@
 subsetPhyloDist <- function(tree, wd, nworker = 1) {
   if (length(tree$tip.label) < 2L) stop("subsetPhyloDist: tree must have at least 2 tips.")
   dir.create(wd, showWarnings = FALSE, recursive = TRUE)
-  reproducible::Cache(iCAMP::pdist.big, tree = tree, wd = wd, nworker = nworker,
+  # iCAMP::pdist.big refuses a wd that already holds its pd.* artifacts. `wd`
+  # (from phyloDistWd) is keyed on subset + filter thresholds, NOT the tree, so a
+  # different tree that maps to the same wd — e.g. a prior QIIME run vs a later
+  # dada2 run, both subset "whole" at the same thresholds — collides on stale
+  # pd.* and errors. Clear iCAMP's artifacts inside the Cached closure so this
+  # runs ONLY on a cache MISS (a different/first tree); on a HIT (same tree) the
+  # closure never fires and the valid cached distance is reused untouched.
+  buildPdistBig <- function(tree, wd, nworker) {
+    stale <- list.files(wd, pattern = "^(pd\\.|path\\.rda$)", full.names = TRUE)
+    if (length(stale)) unlink(stale)
+    iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker)
+  }
+  reproducible::Cache(buildPdistBig, tree = tree, wd = wd, nworker = nworker,
                       userTags = c("subsetPhyloDist", "pdist.big"))
 }
 
