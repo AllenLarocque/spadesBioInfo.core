@@ -19,6 +19,32 @@ isRankAbstention <- function(x) {
     grepl("^unclassified_", x)
 }
 
+#' A CALL that carries no information at this rank.
+#'
+#' Distinct from `isRankAbstention()`, and deliberately so. Abstention means the classifier declined
+#' to name anything here. A placeholder means it DID name something, and the name says nothing at
+#' this rank: `Fusarium_sp` is "some Fusarium" reported at Species, `Fungi_phy_Incertae_sedis` is
+#' "a fungus of unplaced phylum" reported at Phylum.
+#'
+#' The two are kept separate because conflating them destroys information, and because this
+#' project's history shows the cost of getting the abstention predicate wrong IN EITHER DIRECTION --
+#' counting `unclassified_*` as a call inflated every rank by one, and normalising
+#' `*_Incertae_sedis` to silence hid 1,442 of 1,445 Kingdom disagreements.
+#'
+#' Why it matters: measured 2026-07-27, **91.3%** of the ver9->ver10 Species disagreements reported
+#' as "genuine taxonomic disagreement" were two `_sp` placeholders differing. Without this
+#' predicate, no Species-level comparison across UNITE releases is readable.
+#'
+#' @param x character vector of rank values.
+#' @return logical vector, `TRUE` where the value is a call that is uninformative at its rank.
+#' @export
+isRankPlaceholder <- function(x) {
+  v <- trimws(as.character(x))
+  called <- !is.na(v) & nzchar(v)
+  # `_sp` requires the underscore: `Didymella_sp` is a placeholder, `Didymella_pinodes` is not.
+  called & (grepl("_sp$", v) | grepl("_Incertae_sedis$", v) | tolower(v) == "unidentified")
+}
+
 #' Compare taxonomy tables with a call/abstain decomposition.
 #'
 #' Replaces raw string equality, which conflates "we both said Ascomycota" with "we
@@ -46,10 +72,14 @@ compareTaxonomies <- function(taxTables,
     tt <- taxTables[[nm]][ids, , drop = FALSE]
     do.call(rbind, lapply(ranks, function(r) {
       assigned <- !isRankAbstention(tt[[r]])
+      informative <- assigned & !isRankPlaceholder(tt[[r]])
       data.frame(classifier = nm, rank = r, n_features = length(ids),
                  n_assigned = sum(assigned),
                  pct_assigned = if (length(ids)) round(100 * sum(assigned) / length(ids), 1)
                                 else NA_real_,
+                 n_informative = sum(informative),
+                 pct_informative = if (length(ids)) round(100 * sum(informative) / length(ids), 1)
+                                   else NA_real_,
                  stringsAsFactors = FALSE)
     }))
   }))
