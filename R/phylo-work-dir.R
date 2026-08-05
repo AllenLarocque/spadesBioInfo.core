@@ -28,10 +28,14 @@
 #'   exists so the fingerprint is testable, and callable, without constructing a phyloseq.
 #' @return a single path string. Does NOT create the directory (callers already `dir.create()`).
 #' @export
+#' The fingerprinting logic now lives in [contentWorkDir()], which this delegates to. The
+#' taxa-specific checks stay here so their messages still name taxa; everything below the
+#' extraction is general and must NOT be duplicated -- the radix sort, the `serialize = FALSE`
+#' string hash and the NA guard each exist for a recorded reason (see contentWorkDir).
 phyloWorkDir <- function(cacheRoot, subsetName, ps) {
-  if (!is.character(cacheRoot) || length(cacheRoot) != 1L || is.na(cacheRoot) ||
-      !nzchar(cacheRoot))
-    stop("phyloWorkDir: cacheRoot must be a single non-empty string (e.g. cachePath(sim)).")
+  # Argument-name-specific validation stays here so a caller who passed `subsetName` is told
+  # about `subsetName`, not about `label`. Only the FINGERPRINTING is delegated -- that is the
+  # part whose duplication would be a correctness risk.
   if (!is.character(subsetName) || length(subsetName) != 1L || is.na(subsetName) ||
       !nzchar(subsetName))
     stop("phyloWorkDir: subsetName must be a single non-empty string.")
@@ -47,13 +51,5 @@ phyloWorkDir <- function(cacheRoot, subsetName, ps) {
     stop("phyloWorkDir: taxa names contain NA. Sorting drops NA, so c('A', NA) and c('A') would ",
          "fingerprint identically -- exactly the silent collision this helper prevents.")
 
-  # `method = "radix"` forces C-locale byte order. Plain sort() collates by the session locale, so
-  # the same ASV set could order differently on two machines and yield two hashes -- orphaning a
-  # directory that already holds hours of computation.
-  key <- paste(sort(unique(as.character(taxa)), method = "radix"), collapse = "\n")
-  # serialize = FALSE hashes the STRING. serialize = TRUE would fold in R's serialization header,
-  # making the hash a property of the R version rather than of the taxa.
-  hash <- substr(digest::digest(key, algo = "md5", serialize = FALSE), 1L, 8L)
-
-  file.path(cacheRoot, "pd.wd", paste0(subsetName, "-", hash))
+  contentWorkDir(cacheRoot, subsetName, as.character(taxa))
 }
