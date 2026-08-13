@@ -2,22 +2,41 @@
 #'
 #' For every taxon where `keepLogical` is FALSE, one row: `taxon` (id), `filter`
 #' (the step label), `reads` (total abundance), `prevalence` (# samples with a
-#' count > 0), and the taxonomy columns present (Kingdom..Genus). Not exported.
+#' count > 0), and the taxonomy columns the object carries, root down to Genus.
+#' Not exported.
+#'
+#' ⭐ **The rank columns come from the `tax_table` itself, NOT from a rank list.** This used to
+#' be `intersect(c("Kingdom", ..., "Genus"), colnames(tax))`, which silently dropped **Domain**
+#' from a SILVA-classified 16S audit -- and the 16S whitelist filter IS on Domain
+#' (`filterByTaxon(rank = "Domain", keep = c("Bacteria", "Archaea"))`), so the excluded-features
+#' trail recorded WHAT was dropped without recording WHICH DOMAIN it was. This audit exists so
+#' the filter family has no silent drops; a silent drop inside it is the worst place for one.
+#' `setdiff(colnames(tax), c("Species", "confidence"))` reproduces ITS's `Kingdom..Genus`
+#' byte-for-byte and gives SILVA `Domain..Genus`. `confidence` is excluded by name because it
+#' really is a `tax_table` column at runtime -- `assembleParts()` does
+#' `tax_table(as.matrix(taxTable))`, so every `taxTable` column becomes a "rank" -- which is
+#' what the old `intersect` excluded by construction and a naive "all columns" would include.
+#'
+#' ⚠️ Deriving ranks from the object is correct HERE and wrong in [validatePsRaw()], which
+#' takes them as a required argument from an INDEPENDENT source. The two functions do visibly
+#' opposite things on purpose: this one REPORTS the taxonomy that is present (the object is the
+#' only truthful source), `validatePsRaw()` CHECKS an object against an intended schema (the
+#' object would be a vacuous source -- a guard that cannot fail). Do not harmonise them.
+#'
 #' @param ps the phyloseq BEFORE pruning (so reads/prevalence reflect the taxon).
 #' @param keepLogical logical over taxa (in `phyloseq::taxa_names(ps)` order).
 #' @param filter the filter-step label, e.g. "kingdom" / "prevalence".
 recordExcluded <- function(ps, keepLogical, filter) {
   otu <- as(phyloseq::otu_table(ps), "matrix")
   if (!phyloseq::taxa_are_rows(ps)) otu <- t(otu)     # taxa as rows
-  ranks <- intersect(c("Kingdom","Phylum","Class","Order","Family","Genus"),
-                     colnames(as.data.frame(unclass(phyloseq::tax_table(ps)))))
+  tax <- as.data.frame(unclass(phyloseq::tax_table(ps)), stringsAsFactors = FALSE)
+  ranks <- setdiff(colnames(tax), c("Species", "confidence"))
   empty <- data.frame(taxon = character(0), filter = character(0),
                       reads = numeric(0), prevalence = numeric(0),
                       stringsAsFactors = FALSE)
   for (r in ranks) empty[[r]] <- character(0)
   dropped <- !keepLogical
   if (!any(dropped)) return(empty)
-  tax <- as.data.frame(unclass(phyloseq::tax_table(ps)), stringsAsFactors = FALSE)
   out <- data.frame(
     taxon      = phyloseq::taxa_names(ps)[dropped],
     filter     = filter,

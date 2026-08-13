@@ -192,16 +192,30 @@ isRankUninformative <- function(taxMatrix, rank, ranks = NULL) {
 #' both said nothing" and therefore reports agreement rising with depth -- an ordering
 #' no real classifier pair produces.
 #'
+#' @section `ranks` is REQUIRED and has no default:
+#' It used to default to the Kingdom-rooted seven. Because the body then silently INTERSECTS
+#' `ranks` with the columns every table carries (line below), a Domain-rooted caller who forgot
+#' the argument did not get an error -- it got a comparison quietly missing its root rank, or,
+#' with a differently-named ladder, an empty one. That is the exact silent-wrong this project
+#' keeps finding, and it matches what `flattenIdTaxaDescent()` / `buildTaxonomyReport()` /
+#' `validatePsRaw()` already do: rank names are a REFERENCE fact (`sim$referenceRanks`, from
+#' `prepReferenceDb`'s `referenceParserRegistry()`), never a constant, and there is no
+#' reference-neutral vocabulary to fall back to.
+#'
 #' @param taxTables NAMED list of data.frames with rank columns; rownames = feature id.
-#' @param ranks character vector of rank columns to compare.
+#' @param ranks character vector of rank columns to compare. Required -- no default.
 #' @param ids optional character vector of feature ids to restrict to; default is the
 #'   intersection of all rownames.
 #' @return list(assignmentRates, pairwiseAgreement, disagreements), all data.frames.
 #' @export
-compareTaxonomies <- function(taxTables,
-                              ranks = c("Kingdom","Phylum","Class","Order",
-                                        "Family","Genus","Species"),
-                              ids = NULL) {
+compareTaxonomies <- function(taxTables, ranks, ids = NULL) {
+  if (missing(ranks) || is.null(ranks) || !is.character(ranks) || !length(ranks))
+    stop("compareTaxonomies: `ranks` is required -- a non-empty character vector of the rank ",
+         "columns to compare, from the reference that produced the tables ",
+         "(sim$referenceRanks / prepReferenceDb's referenceParserRegistry()). It deliberately ",
+         "has no default: the Kingdom-rooted seven it used to default to are intersected with ",
+         "the tables' own columns below, so a Domain-rooted caller silently lost its root rank ",
+         "instead of erroring.")
   stopifnot(is.list(taxTables), length(taxTables) >= 1L,
             !is.null(names(taxTables)), all(nzchar(names(taxTables))))
   if (is.null(ids))

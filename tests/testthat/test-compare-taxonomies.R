@@ -339,3 +339,22 @@ test_that("compareTaxonomies reports pct_informative beside pct_assigned", {
   # pct_assigned is UNCHANGED, so every previously published figure stays comparable.
   expect_equal(out$pct_assigned[out$rank == "Kingdom"], 66.7)
 })
+
+test_that("compareTaxonomies ERRORS when `ranks` is missing rather than assuming Kingdom-rooted", {
+  # It used to default to the Kingdom-rooted seven and then INTERSECT that with the tables'
+  # own columns, so a Domain-rooted caller who forgot the argument got a comparison quietly
+  # missing its root rank instead of an error. Rank names are a reference fact.
+  silva <- data.frame(row.names = c("a", "b"),
+                      Domain = c("Bacteria", "Archaea"),
+                      Phylum = c("Pseudomonadota", "Thermoproteota"),
+                      stringsAsFactors = FALSE)
+
+  expect_error(compareTaxonomies(list(one = silva)), "`ranks` is required")
+  expect_error(compareTaxonomies(list(one = silva), NULL), "`ranks` is required")
+  expect_error(compareTaxonomies(list(one = silva), character(0)), "`ranks` is required")
+
+  # ... and with the reference's OWN ranks the root rank is present, which is what the silent
+  # default lost.
+  out <- compareTaxonomies(list(one = silva), ranks = c("Domain", "Phylum"))$assignmentRates
+  expect_true("Domain" %in% out$rank)
+})
