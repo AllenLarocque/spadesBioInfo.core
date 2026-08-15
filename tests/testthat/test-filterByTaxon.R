@@ -11,13 +11,15 @@ makeMixedPS <- function() {
 }
 
 test_that("filterByTaxon keeps the whitelist kingdoms and drops the rest", {
-  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Fungi"))
+  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Fungi"),
+                       ranks = c("Kingdom", "Phylum"))
   expect_s4_class(res$ps, "phyloseq")
   expect_setequal(phyloseq::taxa_names(res$ps), c("ASV1","ASV2","ASV5"))  # the Fungi
 })
 
 test_that("filterByTaxon records excluded taxa with reads, prevalence, taxonomy", {
-  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Fungi"))
+  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Fungi"),
+                       ranks = c("Kingdom", "Phylum"))
   ex <- res$excluded
   expect_setequal(ex$taxon, c("ASV3","ASV4"))            # Metazoa + Viridiplantae
   expect_true(all(ex$filter == "kingdom"))
@@ -28,13 +30,14 @@ test_that("filterByTaxon records excluded taxa with reads, prevalence, taxonomy"
 })
 
 test_that("filterByTaxon fails loud on a missing rank and NA is treated as not-kept", {
-  expect_error(filterByTaxon(makeMixedPS(), rank = "Domain", keep = "Bacteria"), "Domain")
+  expect_error(filterByTaxon(makeMixedPS(), rank = "Domain", keep = "Bacteria", ranks = c("Kingdom", "Phylum")), "Domain")
 })
 
 test_that("filterByTaxon returns ps = NULL (not a crash) when the whitelist matches zero taxa", {
   # No taxon has Kingdom == "Bacteria" -> every taxon dropped. phyloseq cannot represent a
   # 0-taxa otu_table, so prune_taxa(all-FALSE) would error; the contract is ps = NULL instead.
-  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Bacteria"))
+  res <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = c("Bacteria"),
+                       ranks = c("Kingdom", "Phylum"))
   expect_null(res$ps)
   expect_setequal(res$excluded$taxon, paste0("ASV", 1:5))   # all five recorded as dropped
   expect_true(all(res$excluded$filter == "kingdom"))
@@ -70,7 +73,8 @@ test_that("the excluded audit carries Domain for a Domain-rooted table", {
   # for SILVA, so the 16S run -- whose whitelist filter IS on Domain -- recorded WHAT was
   # dropped without recording WHICH DOMAIN it was, inside the audit that exists so the filter
   # family has no silent drops.
-  res <- filterByTaxon(makeSilvaPS(), rank = "Domain", keep = c("Bacteria", "Archaea"))
+  res <- filterByTaxon(makeSilvaPS(), rank = "Domain", keep = c("Bacteria", "Archaea"),
+                       ranks = c("Domain", "Phylum", "Class", "Order", "Family", "Genus"))
   ex <- res$excluded
   expect_setequal(ex$taxon, c("ASV3", "ASV4"))                 # Eukaryota + Unassigned
   expect_true("Domain" %in% names(ex))
@@ -82,7 +86,8 @@ test_that("the excluded audit carries Domain for a Domain-rooted table", {
 test_that("the audit stops at Genus and never reports `confidence` as a rank", {
   # `confidence` is a tax_table column at runtime; the old intersect excluded it by
   # construction, so a naive "every column" generalisation would have leaked it in.
-  ex <- filterByTaxon(makeSilvaPS(), rank = "Domain", keep = "Bacteria")$excluded
+  ex <- filterByTaxon(makeSilvaPS(), rank = "Domain", keep = "Bacteria",
+                      ranks = c("Domain", "Phylum", "Class", "Order", "Family", "Genus"))$excluded
   expect_equal(intersect(names(ex), c("Species", "confidence")), character(0))
   expect_equal(setdiff(names(ex), c("taxon", "filter", "reads", "prevalence")),
                c("Domain", "Phylum", "Class", "Order", "Family", "Genus"))
@@ -90,7 +95,7 @@ test_that("the audit stops at Genus and never reports `confidence` as a rank", {
 
 test_that("an ITS-shaped (Kingdom-rooted) audit is byte-identical to before", {
   # The generalisation must be behaviour-preserving on the path that already worked.
-  ex <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = "Fungi")$excluded
+  ex <- filterByTaxon(makeMixedPS(), rank = "Kingdom", keep = "Fungi", ranks = c("Kingdom", "Phylum"))$excluded
   expect_equal(setdiff(names(ex), c("taxon", "filter", "reads", "prevalence")),
                c("Kingdom", "Phylum"))
 })
@@ -100,17 +105,19 @@ test_that("the EMPTY audit frame carries the same rank columns as a populated on
   # populated ones by the filter modules, so a Domain column missing only in the empty case
   # would resurface as a schema mismatch instead of a silent gap.
   kept <- filterByTaxon(makeSilvaPS(), rank = "Domain",
-                        keep = c("Bacteria", "Archaea", "Eukaryota", "Unassigned"))
+                        keep = c("Bacteria", "Archaea", "Eukaryota", "Unassigned"),
+                        ranks = c("Domain", "Phylum", "Class", "Order", "Family", "Genus"))
   expect_equal(nrow(kept$excluded), 0L)
   expect_equal(names(kept$excluded),
-               names(filterByTaxon(makeSilvaPS(), rank = "Domain", keep = "Bacteria")$excluded))
+               names(filterByTaxon(makeSilvaPS(), rank = "Domain", keep = "Bacteria",
+                      ranks = c("Domain", "Phylum", "Class", "Order", "Family", "Genus"))$excluded))
 })
 
 test_that("filterByTaxon retains unassigned kingdoms when NA is whitelisted", {
   ps <- makeMixedPS()                                     # from earlier in this file
   phyloseq::tax_table(ps)["ASV1", "Kingdom"] <- NA        # make one Fungi row NA-kingdom
-  keep_default <- filterByTaxon(ps, rank = "Kingdom", keep = c("Fungi"))
+  keep_default <- filterByTaxon(ps, rank = "Kingdom", keep = c("Fungi"), ranks = c("Kingdom", "Phylum"))
   expect_false("ASV1" %in% phyloseq::taxa_names(keep_default$ps))   # NA excluded by default
-  keep_na <- filterByTaxon(ps, rank = "Kingdom", keep = c("Fungi", NA))
+  keep_na <- filterByTaxon(ps, rank = "Kingdom", keep = c("Fungi", NA), ranks = c("Kingdom", "Phylum"))
   expect_true("ASV1" %in% phyloseq::taxa_names(keep_na$ps))         # NA retained when whitelisted
 })

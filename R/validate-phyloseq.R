@@ -25,11 +25,17 @@
 #'   - `readAmplicon` passes `names(rankPrefixes())` -- the vocabulary its own taxonomy parser
 #'     declares, which is Kingdom-rooted by construction.
 #'
-#' ⚠️ **The opposite rule governs [recordExcluded()] in this same package**, which derives its
-#' rank columns FROM the `tax_table`. The difference is what each function is for: this one
-#' checks an object against an INTENDED schema, so the object is a vacuous source;
-#' `recordExcluded()` reports the taxonomy that is PRESENT, so the object is the only correct
-#' source. They are not inconsistent and must not be "harmonised".
+#' ⚠️ **[recordExcluded()] in this same package now follows the SAME rule** -- it too takes
+#' `ranks` as a required argument from the caller. This note used to claim the opposite ("it
+#' REPORTS the taxonomy that is present, so the object is the only correct source... do not
+#' harmonise them"), and that argument was wrong. Reporting still needs an independent
+#' vocabulary, because a `tax_table` column cannot be classified as a rank by inspecting its
+#' name: `enrichFunGuild` / `enrichFungalTraits` / `enrichFunFun` `cbind` ~12 `FG.*` columns
+#' onto the same `tax_table` before any filter runs, so "the taxonomy that is present" and
+#' "the columns that are present" are different sets and only the reference knows which is
+#' which. See `recordExcluded()`'s own docs for the two generations of name-based rule that
+#' failed. The two functions differ only in what they DO with `ranks` (check vs. record), never
+#' in where it comes from.
 #'
 #' @param ps a phyloseq object.
 #' @param ranks character vector of rank names the `tax_table` must carry, from a source
