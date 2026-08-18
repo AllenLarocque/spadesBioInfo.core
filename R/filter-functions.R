@@ -121,6 +121,126 @@ filterByTaxon <- function(ps, rank = "Kingdom", keep, ranks) {
        excluded = excluded)
 }
 
+#' Drop taxa carrying any of `drop` at any of `searchRanks`; keep the rest.
+#'
+#' The blocklist counterpart to [filterByTaxon()]'s whitelist, for contaminants that a
+#' single-rank whitelist cannot reach. The motivating case is 16S organelle removal:
+#' chloroplast and mitochondrial 16S amplifies readily, and SILVA files both **inside the
+#' bacteria** --
+#'
+#' ```
+#' d__Bacteria; p__Cyanobacteria;  c__Cyanobacteriia;    o__Chloroplast; f__Chloroplast; g__…
+#' d__Bacteria; p__Proteobacteria; c__Alphaproteobacteria; o__Rickettsiales; f__Mitochondria; g__…
+#' ```
+#'
+#' -- so `filterByTaxon(rank = "Domain", keep = c("Bacteria", "Archaea"))` keeps every one of
+#' them, with a confident bacterial lineage and a real plant or fungal name at Species. Nothing
+#' about the resulting table looks wrong. Measured on this project's full-length SILVA probe
+#' (43,547 ASVs / 48 samples): **58 taxa, 1,182 reads, all 58 `d__Bacteria`.**
+#'
+#' @section Rank-agnostic by design:
+#' A taxon matches when **any** column named in `searchRanks` equals a value in `drop`
+#' (case-insensitive, whole-value). The rule is deliberately not tied to the rank a label
+#' canonically sits at, because the rank at which a label *appears* depends on how deep the
+#' classifier resolved that ASV. `Mitochondria` is a Family whose Order (`Rickettsiales`) is a
+#' real bacterial order; `Chloroplast` occupies Order, Family and Genus at once. A rule keyed to
+#' one rank per label works on the reference it was written against and silently misses taxa the
+#' moment either changes -- and dropping the *parent* (`o__Rickettsiales`, `c__Cyanobacteriia`)
+#' instead would remove real bacteria while still passing a naive count check.
+#'
+#' @section Why `searchRanks` and `ranks` are separate arguments:
+#' They answer different questions and take different values. `ranks` is the audit vocabulary --
+#' what the excluded-features TABLE shows, which callers trim to the reference's ladder minus its
+#' leaf (`Domain..Genus`). `searchRanks` is where to LOOK, which is the full ladder including
+#' `Species`. Collapsing them into one argument would work by accident on today's data -- no
+#' organelle label sits at `Species` -- and be wrong the first time one did, which is exactly the
+#' "verifies something adjacent to what it claims" defect this codebase keeps paying for. Both
+#' are required with no default, for the reason given in [recordExcluded()]: a `tax_table` column
+#' cannot be classified as a rank by inspecting its name.
+#'
+#' @section `unmatched` defaults to erroring, and that is the point:
+#' A blocklist that matches nothing is indistinguishable from a blocklist that was never applied.
+#' `drop = "Mitochondrion"` (or `"chloroplasts"`, or a value from a reference whose labels
+#' differ) removes nothing, writes a clean-looking audit and reports success. So each value in
+#' `drop` must match at least one taxon, **checked per value** -- one good value does not excuse a
+#' typo'd neighbour. The check lives here rather than in the calling module so there is exactly
+#' ONE implementation of the matching rule: a second copy in a caller could drift from the rule
+#' actually applied, reintroducing the same defect in a new place. Pass `"warn"` or `"ignore"`
+#' for a caller that genuinely means "drop these if present".
+#'
+#' @param ps a phyloseq object.
+#' @param drop values to remove, matched case-insensitively against whole cell values. Empty or
+#'   `NULL` is a no-op that still returns a well-formed empty audit.
+#' @param searchRanks the `tax_table` columns to search, from the caller's reference vocabulary
+#'   (`sim$referenceRanks`). Required -- no default, and NOT defaulted to `ranks`.
+#' @param ranks the `tax_table` columns the audit records, root-first; or `NULL` to skip the
+#'   audit. Required -- no default. ⚠️ Forwarded to [recordExcluded()] VERBATIM.
+#' @param filter the filter-step label written into the audit's `filter` column.
+#' @param unmatched what to do when a `drop` value matches no taxon: `"error"` (default),
+#'   `"warn"`, or `"ignore"`.
+#' @return list(ps = filtered phyloseq, excluded = audit data.frame or `NULL` when `ranks` is
+#'   `NULL`, matched = named integer of taxa matched per `drop` value, keyed by the value as
+#'   supplied). `ps` is `NULL` when every taxon is dropped (phyloseq cannot hold a 0-taxa
+#'   object) -- callers must guard `is.null(res$ps)` before [phyloseq::ntaxa()], as with
+#'   [filterByTaxon()].
+#' @export
+dropByTaxon <- function(ps, drop, searchRanks, ranks, filter = "droptaxa",
+                        unmatched = c("error", "warn", "ignore")) {
+  unmatched <- match.arg(unmatched)
+  if (missing(searchRanks))
+    stop("dropByTaxon: `searchRanks` is required -- a non-empty character vector naming the ",
+         "tax_table columns to SEARCH, from this run's reference vocabulary (sim$referenceRanks). ",
+         "It deliberately has no default and is deliberately not defaulted to `ranks`: `ranks` is ",
+         "the audit vocabulary and callers trim its terminal rank, so reusing it here would ",
+         "quietly narrow the search.", call. = FALSE)
+  if (!is.character(searchRanks) || !length(searchRanks))
+    stop("dropByTaxon: `searchRanks` must be a non-empty character vector; got ",
+         class(searchRanks)[[1L]], " of length ", length(searchRanks), ".", call. = FALSE)
+
+  tax <- as.data.frame(unclass(phyloseq::tax_table(ps)), stringsAsFactors = FALSE)
+  absent <- setdiff(searchRanks, colnames(tax))
+  if (length(absent))
+    stop("dropByTaxon: tax_table has no column(s) ", paste(absent, collapse = ", "),
+         " named in `searchRanks` (it has: ", paste(colnames(tax), collapse = ", "), ").",
+         call. = FALSE)
+
+  drop <- as.character(drop)
+  matched <- integer(length(drop))
+  names(matched) <- drop           # keyed by the value AS SUPPLIED, so errors quote the config
+  dropLogical <- rep(FALSE, nrow(tax))
+  for (i in seq_along(drop)) {
+    hit <- rep(FALSE, nrow(tax))
+    for (nm in searchRanks) {
+      v <- tax[[nm]]
+      hit <- hit | (!is.na(v) & tolower(v) == tolower(drop[[i]]))
+    }
+    matched[[i]] <- sum(hit)
+    dropLogical <- dropLogical | hit
+  }
+
+  # Per-value, not any(): `if (!any(matched))` would pass on c("Chloroplast", "Mitochondrion")
+  # and silently ignore the typo -- the failure this guard exists to catch.
+  bad <- names(matched)[matched == 0L]
+  if (length(bad) && !identical(unmatched, "ignore")) {
+    msg <- paste0(
+      "dropByTaxon: drop value(s) matched ZERO taxa: ",
+      paste0("'", bad, "'", collapse = ", "),
+      ". Searched ranks: ", paste(searchRanks, collapse = ", "), " (case-insensitive, ",
+      "whole-value). A drop-list that matches nothing is indistinguishable from one that never ",
+      "ran, so this is an error by default: fix the value, or remove it from the caller's ",
+      "drop-list parameter. Pass unmatched = \"warn\"/\"ignore\" to mean \"drop these if present\".")
+    if (identical(unmatched, "error")) stop(msg, call. = FALSE) else warning(msg, call. = FALSE)
+  }
+
+  keepLogical <- !dropLogical
+  # Forwarded, never defaulted -- see filterByTaxon(). A `ranks` omitted by the caller stays
+  # missing through this call and surfaces as recordExcluded()'s named error.
+  excluded <- recordExcluded(ps, keepLogical, filter, ranks)
+  list(ps = if (any(keepLogical)) phyloseq::prune_taxa(keepLogical, ps) else NULL,
+       excluded = excluded,
+       matched = matched)
+}
+
 #' Keep taxa present in >= `minPrevalence` samples AND with total abundance
 #' >= `minTotalAbundance`. Base-phyloseq equivalent of `microViz::tax_filter`;
 #' identical keep-set to the modules' copied `filterPhyloseq`.
