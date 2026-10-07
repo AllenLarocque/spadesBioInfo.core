@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RUN_SET>
+  <RUN alias="s1-amp" center_name="Nowhere Lab">
+    <EXPERIMENT_REF refname="s1-amp"/>
+    <DATA_BLOCK>
+      <FILES>
+        <FILE filename="amp/s1.fwd.fq.gz" filetype="fastq" checksum_method="MD5" checksum="f9aea6fcd57067fc2a01f3370e65768d"/>
+        <FILE filename="amp/s1.rev.fq.gz" filetype="fastq" checksum_method="MD5" checksum="f9aea6fcd57067fc2a01f3370e65768d"/>
+      </FILES>
+    </DATA_BLOCK>
+  </RUN>
+  <RUN alias="s2-amp" center_name="Nowhere Lab">
+    <EXPERIMENT_REF refname="s2-amp"/>
+    <DATA_BLOCK>
+      <FILES>
+        <FILE filename="amp/s2.fwd.fq.gz" filetype="fastq" checksum_method="MD5" checksum="e07df036017050a6d907a561d36c8c65"/>
+        <FILE filename="amp/s2.rev.fq.gz" filetype="fastq" checksum_method="MD5" checksum="e07df036017050a6d907a561d36c8c65"/>
+      </FILES>
+    </DATA_BLOCK>
+  </RUN>
+  <RUN alias="s2-amp-r2" center_name="Nowhere Lab">
+    <TITLE>re-sequencing; not used in analysis</TITLE>
+    <EXPERIMENT_REF refname="s2-amp"/>
+    <DATA_BLOCK>
+      <FILES>
+        <FILE filename="amp/s2b.fwd.fq.gz" filetype="fastq" checksum_method="MD5" checksum="0170baba4994f672d7516282d9888e78"/>
+        <FILE filename="amp/s2b.rev.fq.gz" filetype="fastq" checksum_method="MD5" checksum="0170baba4994f672d7516282d9888e78"/>
+      </FILES>
+    </DATA_BLOCK>
+  </RUN>
+</RUN_SET>

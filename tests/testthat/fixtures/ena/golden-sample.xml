@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SAMPLE_SET>
+  <SAMPLE alias="s1" center_name="Nowhere Lab">
+    <TITLE>s1</TITLE>
+    <SAMPLE_NAME>
+      <TAXON_ID>410658</TAXON_ID>
+      <SCIENTIFIC_NAME>soil metagenome</SCIENTIFIC_NAME>
+    </SAMPLE_NAME>
+    <SAMPLE_ATTRIBUTES>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>ENA-CHECKLIST</TAG>
+        <VALUE>ERC999999</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>collection date</TAG>
+        <VALUE>2020-05-01</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>geographic location (country and/or sea)</TAG>
+        <VALUE>Canada</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>depth</TAG>
+        <VALUE>0.1</VALUE>
+        <UNITS>m</UNITS>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>site code</TAG>
+        <VALUE>A</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>carbon content</TAG>
+        <VALUE>1.5</VALUE>
+        <UNITS>%</UNITS>
+      </SAMPLE_ATTRIBUTE>
+    </SAMPLE_ATTRIBUTES>
+  </SAMPLE>
+  <SAMPLE alias="s2" center_name="Nowhere Lab">
+    <TITLE>s2</TITLE>
+    <SAMPLE_NAME>
+      <TAXON_ID>410658</TAXON_ID>
+      <SCIENTIFIC_NAME>soil metagenome</SCIENTIFIC_NAME>
+    </SAMPLE_NAME>
+    <SAMPLE_ATTRIBUTES>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>ENA-CHECKLIST</TAG>
+        <VALUE>ERC999999</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>collection date</TAG>
+        <VALUE>2020-05-01</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>geographic location (country and/or sea)</TAG>
+        <VALUE>Canada</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>depth</TAG>
+        <VALUE>0.1</VALUE>
+        <UNITS>m</UNITS>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>site code</TAG>
+        <VALUE>A</VALUE>
+      </SAMPLE_ATTRIBUTE>
+      <SAMPLE_ATTRIBUTE>
+        <TAG>carbon content</TAG>
+        <VALUE>2.5</VALUE>
+        <UNITS>%</UNITS>
+      </SAMPLE_ATTRIBUTE>
+    </SAMPLE_ATTRIBUTES>
+  </SAMPLE>
+</SAMPLE_SET>
