@@ -56,6 +56,21 @@ test_that("enaOnlineChecks flags an ENVO id whose label differs, and a drifted c
   expect_identical(sort(iss$rule), c("checklist-drift", "envo-label"))
 })
 
+test_that("enaOnlineChecks asks OLS4 for the DOUBLE-encoded IRI (the only form OLS4 accepts)", {
+  # OLS4 answers HTTP 400 to a singly encoded IRI. The fake above matched any ols4 URL, so a
+  # single encoding passed the tests while every real lookup failed (2026-10-12, all 4 terms).
+  ok <- paste0("https://www.ebi.ac.uk/ols4/api/ontologies/envo/terms/",
+               "http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FENVO_01000211")
+  fetch <- function(url) {
+    if (identical(url, ok)) return('{"label":"temperate coniferous forest biome"}')
+    stop("GET ", url, " returned HTTP 400", call. = FALSE)
+  }
+  envo <- data.frame(id = "ENVO:01000211", label = "temperate coniferous forest biome",
+                     stringsAsFactors = FALSE)
+  cls <- data.frame(id = character(), path = character(), stringsAsFactors = FALSE)
+  expect_equal(nrow(enaOnlineChecks(envo, cls, fetch = fetch)), 0L)
+})
+
 test_that("enaCredentials' missing-variable error never contains the password", {
   withr::local_envvar(ENA_WEBIN_USER = "", ENA_WEBIN_PASSWORD = "s3cret-pw-value")
   msg <- tryCatch(enaCredentials(), error = function(e) conditionMessage(e))
