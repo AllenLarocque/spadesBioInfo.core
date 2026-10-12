@@ -130,8 +130,10 @@ enaUpload <- function(files, creds, remoteSize = .ftpSize, put = .ftpPut) {
 enaOnlineChecks <- function(envo, checklists, fetch = .httpGet) {
   out <- list(.noIssues())
   for (i in seq_len(nrow(envo))) {
-    iri <- utils::URLencode(utils::URLencode(
-      paste0("http://purl.obolibrary.org/obo/", sub(":", "_", envo$id[i])), reserved = TRUE), reserved = TRUE)
+    # OLS4 wants the IRI percent-encoded TWICE. URLencode() never re-encodes "%", so calling it
+    # twice encodes once (OLS4 then answers HTTP 400); the second pass is done by hand.
+    iri <- gsub("%", "%25", utils::URLencode(
+      paste0("http://purl.obolibrary.org/obo/", sub(":", "_", envo$id[i])), reserved = TRUE), fixed = TRUE)
     url <- paste0("https://www.ebi.ac.uk/ols4/api/ontologies/envo/terms/", iri)
     got <- tryCatch(jsonlite::fromJSON(fetch(url))$label, error = function(e) NA_character_)
     if (is.null(got) || is.na(got))
