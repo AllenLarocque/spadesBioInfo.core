@@ -12,10 +12,13 @@ must be explicit and documented in that module.
 
 ## Install
 
-Published as a public GitHub package and consumed by pinned tag. In the project's
-`setupProject(packages=)` and in each consuming module's `reqdPkgs`:
+Published as a public GitHub package and consumed from `main` with a version floor. In the
+project's `setupProject(packages=)` and in each consuming module's `reqdPkgs`:
 
-    "AllenLarocque/spadesBioInfo.core@v0.1.0"
+    "AllenLarocque/spadesBioInfo.core@main (>= <version>)"
 
-`Require` installs it from GitHub. Bump the tag to release a change; consumers
-re-pin to the new tag.
+`Require` installs it from GitHub. To release a change: bump `Version:` in `DESCRIPTION`, run
+`scripts/publish-standalone.sh spadesBioInfo.core AllenLarocque/spadesBioInfo.core`, which opens
+a `release/v<version>` PR on the standalone repo (since 2026-10-12, PR #76; it no longer pushes to
+`main`), merge that PR, and raise the floors repo-wide. NAMESPACE is hand-maintained: add an
+`export()` line for every new exported function. See `docs/ARCHITECTURE.md`.
