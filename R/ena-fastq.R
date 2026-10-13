@@ -4,8 +4,11 @@
 #' gzip integrity come from one streaming decompression. A corrupt or truncated file is
 #' reported (`ok = FALSE`, `error` set), never thrown, so one bad file cannot hide the others.
 #'
-#' Deliberately NOT cached. Caching a content hash under a path/mtime label is the cache-key
-#' bug class this project has hit repeatedly; re-reading is cheap enough to always be correct.
+#' This function itself is uncached: every call reads every byte. The packaging module
+#' memoises it (modules/packageReadsForArchive/R/fastqScanCache.R, `scanFastqCached()`), keyed on
+#' each file's [fastqFingerprint()] (path, size, mtime) and on [scanFastqVersion()]. That key is a
+#' content PROXY, not a label, and its accepted residual risk is documented there.
+#' **Bump [scanFastqVersion()] whenever this function's output can change for the same files.**
 #'
 #' @param paths character vector of .fastq.gz paths.
 #' @param chunk lines read per chunk.
@@ -33,6 +36,36 @@ scanFastq <- function(paths, chunk = 400000L) {
     return(data.frame(path = character(), md5 = character(), reads = integer(),
                       ok = logical(), error = character(), stringsAsFactors = FALSE))
   do.call(rbind, lapply(paths, one))
+}
+
+#' Version of [scanFastq()]'s behaviour, for cache keys.
+#'
+#' The packaging module's scan cache keys on this, NOT on the spadesBioInfo.core version, so an
+#' unrelated core release does not force a full re-read of every FASTQ (12.4 GB, ~25 min in this
+#' study). **Bump it when scanFastq's output can change** for the same input files: what it
+#' computes (md5, read count, integrity verdict, error text), its columns or their types. Do not
+#' bump it for changes that cannot alter the output (speed, comments).
+#'
+#' @return integer(1).
+#' @export
+scanFastqVersion <- function() 1L
+
+#' Cheap per-file content proxy: path, size and mtime, from one stat() per file.
+#'
+#' Never reads a byte. Used as the key of the packaging module's scan cache and recorded in the
+#' `fastq-fingerprint.json` sidecar that `scripts/submit-ena.R` checks on the test server. Size
+#' and mtime are CHARACTER so they compare exactly (no float round trip): size in whole bytes
+#' (`"%.0f"`, never scientific notation), mtime in seconds since the epoch with 6 decimals
+#' (`"%.6f"`). This format is a stored contract: changing it makes every existing sidecar fail
+#' to verify.
+#'
+#' @param paths character vector of file paths.
+#' @return data.frame(path, size, mtime), one row per path, in `paths` order.
+#' @export
+fastqFingerprint <- function(paths) {
+  info <- file.info(paths, extra_cols = FALSE)
+  data.frame(path = as.character(paths), size = sprintf("%.0f", info$size),
+             mtime = sprintf("%.6f", as.numeric(info$mtime)), stringsAsFactors = FALSE)
 }
 
 .iupacRegex <- function(primer) {

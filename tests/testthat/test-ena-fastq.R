@@ -58,3 +58,57 @@ test_that("primerPositions returns zeros (not an error) for a FASTQ with no read
   expect_identical(r$nReads, 0L); expect_identical(r$nFound, 0L)
   expect_true(is.na(r$medianPos))
 })
+
+# ---- fastqFingerprint: the stat() proxy the scan cache and the submission sidecar share ---------
+test_that("fastqFingerprint is path + size + mtime from stat(), with no file content in it", {
+  fx <- enaFixture()
+  p <- file.path(fx$root, c("reads/amp/s1.fwd.fq.gz", "reads/amp/s2.fwd.fq.gz"))
+  f <- fastqFingerprint(rev(p))
+  expect_identical(names(f), c("path", "size", "mtime"))
+  expect_identical(f$path, rev(p))                     # one row per path, in the order given
+  expect_identical(f$size, sprintf("%.0f", file.size(rev(p))))
+  expect_identical(f$mtime, sprintf("%.6f", as.numeric(file.mtime(rev(p)))))
+  # Reads nothing: an unreadable file fingerprints exactly as before.
+  before <- fastqFingerprint(p[1])
+  Sys.chmod(p[1], "000"); withr::defer(Sys.chmod(p[1], "644"))
+  skip_if(file.access(p[1], 4L) == 0L, "this user can read mode-000 files (root?)")
+  expect_identical(fastqFingerprint(p[1]), before)
+})
+
+test_that("fastqFingerprint's format is pinned: existing fastq-fingerprint.json sidecars must keep verifying", {
+  # packageReadsForArchive writes these strings verbatim into fastq-fingerprint.json and
+  # scripts/submit-ena.R compares them as strings. Any format change (scientific notation, fewer
+  # decimals, numeric columns) makes every existing sidecar mismatch, so the row is pinned LITERALLY.
+  d <- withr::local_tempdir()
+  a <- file.path(d, "a.fq.gz"); b <- file.path(d, "b.fq.gz")
+  writeBin(as.raw(rep(65L, 100000L)), a)   # 1e5 bytes: as.character() would give "1e+05"
+  writeBin(as.raw(rep(66L, 7L)), b)
+  Sys.setFileTime(a, as.POSIXct(1686000000, origin = "1970-01-01", tz = "UTC"))     # whole second
+  Sys.setFileTime(b, as.POSIXct(1686000000.25, origin = "1970-01-01", tz = "UTC"))  # sub-second
+  skip_if(as.numeric(file.mtime(b)) != 1686000000.25, "filesystem drops sub-second mtimes")
+  expect_identical(
+    fastqFingerprint(c(a, b)),
+    data.frame(path = c(a, b), size = c("100000", "7"),
+               mtime = c("1686000000.000000", "1686000000.250000"), stringsAsFactors = FALSE))
+})
+
+# ---- scanFastqVersion: the scan cache's key component for scanFastq's own behaviour -------------
+test_that("scanFastqVersion is a single positive integer", {
+  v <- scanFastqVersion()
+  expect_type(v, "integer")
+  expect_length(v, 1L)
+  expect_true(v >= 1L)
+})
+
+test_that("scanFastq's output schema is pinned to scanFastqVersion (bump the version on any change)", {
+  # Tripwire. packageReadsForArchive caches scanFastq() keyed on scanFastqVersion(), NOT on the core
+  # version, so a change to scanFastq's output that does not bump scanFastqVersion() is served
+  # stale from every existing cache. If this fails because you changed scanFastq: bump
+  # scanFastqVersion() and update BOTH expectations below.
+  fx <- enaFixture()
+  s <- scanFastq(file.path(fx$root, "reads/amp/s1.fwd.fq.gz"))
+  expect_identical(scanFastqVersion(), 1L)
+  expect_identical(vapply(s, function(x) class(x)[1], ""),
+                   c(path = "character", md5 = "character", reads = "integer", ok = "logical",
+                     error = "character"))
+})
