@@ -67,38 +67,146 @@ enaSubmit <- function(xml, server, creds, post = .curlPost) {
 
 .ftpUrl <- function(remoteName) paste0("ftp://webin2.ebi.ac.uk/", utils::URLencode(remoteName))
 
-.ftpSize <- function(remoteName, creds) {
-  h <- do.call(curl::new_handle, c(list(nobody = TRUE, username = creds$user,
-                                         password = creds$password), .enaCurlTimeouts))
-  res <- tryCatch(curl::curl_fetch_memory(.ftpUrl(remoteName), handle = h), error = function(e) NULL)
+# ---- FTP session: ONE logged-in connection for a whole upload ------------------------------------
+# An authenticated login on webin2 takes ~24 s, so a connection per request (SIZE, then PUT) cost
+# ~50 s per file -- ~25 h of logins for 1,794 files. A session holds ONE curl handle and ONE curl
+# pool (multi handle) and runs every request through them. The pool matters: curl_fetch_memory()
+# (interruptible mode, the default) performs each request in a TEMPORARY multi handle whose
+# connection cache dies with it, so even a reused handle reconnects and logs in again (measured
+# live 2026-10-12). A persistent pool keeps the control connection, and Ctrl-C still works.
+# handle_reset() between requests clears the previous request's options (upload, readfunction)
+# but not the pool's live connections. If the server drops the connection, libcurl reconnects
+# on the next request; .ftpRenew() forces a fresh handle + pool (used before a retry).
+.ftpSession <- function(creds, newHandle = curl::new_handle, newPool = curl::new_pool) {
+  s <- new.env(parent = emptyenv())
+  s$creds <- creds; s$newHandle <- newHandle; s$newPool <- newPool
+  s$handle <- NULL; s$pool <- NULL
+  s
+}
+
+.ftpRenew <- function(session) { session$handle <- NULL; session$pool <- NULL; invisible(session) }
+
+# One request on the session's connection; returns curl's result or stops with libcurl's message
+# (which never contains the credentials).
+.ftpPerform <- function(session, url, opts) {
+  if (is.null(session$handle)) {
+    session$handle <- session$newHandle(); session$pool <- session$newPool()
+  }
+  h <- session$handle
+  curl::handle_reset(h)
+  do.call(curl::handle_setopt, c(list(h, username = session$creds$user,
+                                      password = session$creds$password, verbose = FALSE),
+                                 .enaCurlTimeouts, opts))
+  res <- NULL; err <- NULL
+  curl::curl_fetch_multi(url, done = function(x) res <<- x, fail = function(e) err <<- e,
+                         pool = session$pool, handle = h)
+  curl::multi_run(pool = session$pool)
+  if (!is.null(err)) stop(err, call. = FALSE)
+  if (is.null(res)) stop("FTP request to ", url, " did not complete.", call. = FALSE)
+  res
+}
+
+# Remote size in bytes, or NA (absent, or the SIZE check failed: the file is then uploaded).
+.ftpSize <- function(remoteName, creds, session = .ftpSession(creds)) {
+  res <- tryCatch(.ftpPerform(session, .ftpUrl(remoteName), list(nobody = TRUE)),
+                  error = function(e) NULL)
   if (is.null(res)) return(NA_real_)
   len <- curl::parse_headers_list(res$headers)[["content-length"]]
   if (is.null(len)) NA_real_ else as.numeric(len)
 }
 
-.ftpPut <- function(path, remoteName, creds, url = .ftpUrl(remoteName)) {
-  # curl_upload() has no `handle` argument: its `...` are curl options for a fresh handle.
-  do.call(curl::curl_upload, c(list(path, url, verbose = FALSE, username = creds$user,
-                                    password = creds$password, ftp_create_missing_dirs = TRUE),
-                               .enaCurlTimeouts))
+.ftpPut <- function(path, remoteName, creds, url = .ftpUrl(remoteName), session = .ftpSession(creds)) {
+  con <- file(path, open = "rb"); on.exit(close(con))
+  res <- .ftpPerform(session, url, list(
+    upload = TRUE, filetime = FALSE, ftp_create_missing_dirs = TRUE,
+    infilesize_large = file.size(path),
+    readfunction = function(n) readBin(con, raw(), n = n),
+    seekfunction = function(offset) seek(con, where = offset)))
+  if (!is.null(res$status_code) && res$status_code >= 400)
+    stop("FTP upload of ", remoteName, " returned status ", res$status_code, call. = FALSE)
   invisible(TRUE)
 }
 
-#' Upload run files to the Webin FTP area; a file already there with the same size is skipped
-#' (ENA verifies every md5 against the run XML after submission).
+# The session goes to a transport only if it can take it, so injected fakes keep the plain
+# (remoteName, creds) / (path, remoteName, creds) signatures.
+.withSession <- function(f, args, session) {
+  if (any(c("session", "...") %in% names(formals(f)))) args$session <- session
+  do.call(f, args)
+}
+
+.fmtBytes <- function(b) {
+  u <- c("B", "kB", "MB", "GB", "TB"); k <- if (b > 0) min(floor(log(b, 1000)), 4) else 0
+  sprintf(if (k == 0) "%.0f %s" else "%.1f %s", b / 1000^k, u[k + 1])
+}
+
+.fmtDuration <- function(sec) {
+  sec <- round(sec)
+  if (sec < 60) return(paste0(sec, "s"))
+  if (sec < 3600) return(sprintf("%dm%02ds", sec %/% 60, sec %% 60))
+  sprintf("%dh%02dm", sec %/% 3600, (sec %% 3600) %/% 60)
+}
+
+#' Upload run files to the Webin FTP area over ONE FTP connection; a file already there with the
+#' same size is skipped (ENA verifies every md5 against the run XML after submission), so an
+#' interrupted upload is resumed by running it again.
 #' @param files tables$files. @param creds enaCredentials().
-#' @return data.frame(remoteName, action).
+#' @param remoteSize,put transports (injectable for tests); the defaults share `session`.
+#' @param session FTP session (one connection) used by the default transports.
+#' @param attempts tries per file; each retry is on a fresh connection. The upload stops,
+#'   naming the file, when every attempt failed.
+#' @return data.frame(remoteName, action). Progress is reported with message(), one line per file.
 #' @export
-enaUpload <- function(files, creds, remoteSize = .ftpSize, put = .ftpPut) {
-  act <- character(nrow(files))
-  for (i in seq_len(nrow(files))) {
-    if (!file.exists(files$path[i]))
-      stop("enaUpload: local file does not exist: ", files$path[i], call. = FALSE)
-    sz <- remoteSize(files$remoteName[i], creds)
-    if (!is.na(sz) && sz == file.size(files$path[i])) { act[i] <- "skipped"; next }
-    put(files$path[i], files$remoteName[i], creds)
-    act[i] <- "uploaded"
+enaUpload <- function(files, creds, remoteSize = .ftpSize, put = .ftpPut,
+                      session = .ftpSession(creds), attempts = 3L) {
+  n <- nrow(files)
+  missingLocal <- files$path[!file.exists(files$path)]
+  if (length(missingLocal))
+    stop("enaUpload: local file does not exist: ", paste(missingLocal, collapse = ", "), call. = FALSE)
+  bytes <- file.size(files$path)
+  w <- nchar(n)
+  message("enaUpload: ", n, " files, ", .fmtBytes(sum(bytes)), "; files already on the server ",
+          "with the same size are skipped.")
+  act <- character(n)
+  t0 <- Sys.time(); upBytes <- 0; upSecs <- 0
+  for (i in seq_len(n)) {
+    ti <- Sys.time()
+    sz <- .withSession(remoteSize, list(files$remoteName[i], creds), session)
+    if (!is.na(sz) && sz == bytes[i]) {
+      act[i] <- "skipped"
+    } else {
+      for (a in seq_len(attempts)) {
+        ok <- tryCatch({
+          .withSession(put, list(files$path[i], files$remoteName[i], creds), session); TRUE
+        }, error = function(e) conditionMessage(e))
+        if (isTRUE(ok)) break
+        if (a == attempts)
+          stop("enaUpload: could not upload ", files$path[i], " as ", files$remoteName[i],
+               " after ", attempts, " attempts: ", ok, ". Files already uploaded are skipped ",
+               "when the upload is run again.", call. = FALSE)
+        message("enaUpload: ", files$remoteName[i], " failed (attempt ", a, "/", attempts, "): ",
+                ok, "; retrying on a fresh connection.")
+        .ftpRenew(session)
+      }
+      act[i] <- "uploaded"
+      secs <- as.numeric(difftime(Sys.time(), ti, units = "secs"))
+      upBytes <- upBytes + bytes[i]; upSecs <- upSecs + secs
+    }
+    rate <- if (upSecs > 0) upBytes / upSecs else NA_real_
+    left <- sum(bytes[seq_len(n) > i])
+    eta <- if (left == 0) "0s" else if (is.na(rate)) "unknown" else
+      paste0("<= ", .fmtDuration(left / rate))
+    message(sprintf("enaUpload [%*d/%d] %-8s %s (%s) in %s; elapsed %s; sent %s at %s/s; ETA %s",
+                    w, i, n, act[i], files$remoteName[i], .fmtBytes(bytes[i]),
+                    .fmtDuration(as.numeric(difftime(Sys.time(), ti, units = "secs"))),
+                    .fmtDuration(as.numeric(difftime(Sys.time(), t0, units = "secs"))),
+                    .fmtBytes(upBytes), if (is.na(rate)) "-" else .fmtBytes(rate), eta))
   }
+  up <- act == "uploaded"
+  total <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  message(sprintf("enaUpload done: %d uploaded (%s), %d skipped (%s), of %d files in %s%s.",
+                  sum(up), .fmtBytes(sum(bytes[up])), sum(!up), .fmtBytes(sum(bytes[!up])), n,
+                  .fmtDuration(total),
+                  if (upSecs > 0) paste0(", ", .fmtBytes(upBytes / upSecs), "/s while uploading") else ""))
   data.frame(remoteName = files$remoteName, action = act, stringsAsFactors = FALSE)
 }
 

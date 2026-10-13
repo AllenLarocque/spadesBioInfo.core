@@ -130,7 +130,10 @@ test_that("every curl call carries a connect timeout and a stall (low-speed) tim
     handle_setopt = function(handle, ...) { rec(list(...)); invisible(handle) },
     handle_setform = function(handle, ...) invisible(handle),
     curl_fetch_memory = function(url, handle = NULL) { force(handle); fake },
-    curl_upload = function(file, url, verbose = TRUE, reuse = TRUE, ...) { rec(list(...)); invisible(NULL) },
+    handle_reset = function(handle) invisible(handle),
+    new_pool = function(...) structure(list(), class = "curl_multi"),
+    curl_fetch_multi = function(url, done = NULL, fail = NULL, pool = NULL, data = NULL, handle) done(fake),
+    multi_run = function(timeout = Inf, poll = FALSE, pool = NULL) invisible(list()),
     .package = "curl")
   creds <- list(user = "u", password = "p")
   f <- withr::local_tempfile(fileext = ".xml"); writeLines("<A/>", f)
@@ -143,4 +146,135 @@ test_that("every curl call carries a connect timeout and a stall (low-speed) tim
     if (fn == "curlPost") w$low_speed_time <- 1800L   # a large synchronous ADD sends no bytes while ENA works
     for (o in names(w)) expect_equal(seen[[fn]][[o]], w[[o]], info = paste(fn, o))
   }
+})
+
+# ---- FTP session: one connection for the whole upload (2026-10-12) ----------------------------
+# A fake libcurl: handles are environments recording their options; `respond(url, opts)` returns
+# list(size = <remote size or NULL>) for success or a string (the libcurl error) for failure.
+# Counts handle and pool creations so the tests can pin ONE connection per upload.
+fakeCurl <- function(respond) {
+  st <- new.env(); st$handles <- 0L; st$pools <- 0L; st$requests <- list(); st$uploaded <- list()
+  st$mocks <- list(
+    new_handle = function(...) {
+      st$handles <- st$handles + 1L
+      h <- new.env(); h$id <- st$handles; h$opts <- list(...); structure(h, class = "curl_handle")
+    },
+    new_pool = function(...) { st$pools <- st$pools + 1L; structure(list(id = st$pools), class = "curl_multi") },
+    handle_reset = function(handle) { handle$opts <- list(); invisible(handle) },
+    handle_setopt = function(handle, ...) { handle$opts <- utils::modifyList(handle$opts, list(...)); invisible(handle) },
+    curl_fetch_multi = function(url, done = NULL, fail = NULL, pool = NULL, data = NULL, handle) {
+      o <- handle$opts
+      st$requests[[length(st$requests) + 1L]] <- list(url = url, handle = handle$id, opts = o)
+      if (isTRUE(o$upload)) {     # drain the readfunction like libcurl would
+        got <- raw(0)
+        repeat { b <- o$readfunction(65536L); if (!length(b)) break; got <- c(got, b) }
+        st$uploaded[[url]] <- got
+      }
+      r <- respond(url, o)
+      if (is.character(r)) fail(r)
+      else done(list(status_code = if (isTRUE(o$upload)) 226L else 213L, content = raw(0),
+                     headers = charToRaw(if (is.null(r$size)) "" else
+                       paste0("Content-Length: ", r$size, "\r\n"))))
+      invisible(handle)
+    },
+    multi_run = function(timeout = Inf, poll = FALSE, pool = NULL) invisible(list()))
+  st
+}
+
+ftpFiles <- function(n = 3L, bytes = c(5L, 7L, 11L), env = parent.frame()) {
+  d <- withr::local_tempdir(.local_envir = env)
+  p <- file.path(d, sprintf("s%d_R1.fastq.gz", seq_len(n)))
+  for (i in seq_len(n)) writeBin(as.raw(rep(i, bytes[i])), p[i])
+  data.frame(path = p, remoteName = basename(p), stringsAsFactors = FALSE)
+}
+
+test_that("enaUpload uses ONE curl handle and ONE pool for every SIZE check and upload", {
+  # Before 2026-10-12 every SIZE and every PUT built its own handle (a fresh FTP login each,
+  # ~24 s authenticated on webin2): ~50 s of logins per file, ~25 h for 1,794 files.
+  files <- ftpFiles()
+  st <- fakeCurl(function(url, o) {
+    if (isTRUE(o$nobody) && grepl("s2_R1", url)) return(list(size = 7))
+    if (isTRUE(o$nobody)) return("Remote file not found")
+    list()
+  })
+  do.call(local_mocked_bindings, c(st$mocks, list(.package = "curl")))
+  creds <- list(user = "Webin-1", password = "pw-xyz")
+  u <- suppressMessages(enaUpload(files, creds))
+  expect_identical(u$action, c("uploaded", "skipped", "uploaded"))
+  expect_identical(st$handles, 1L)
+  expect_identical(st$pools, 1L)
+  expect_length(st$requests, 5L)                       # 3 SIZE + 2 PUT
+  expect_true(all(vapply(st$requests, `[[`, 1L, "handle") == 1L))
+  # every request is authenticated and carries the timeouts
+  for (r in st$requests) {
+    expect_identical(r$opts$username, "Webin-1")
+    expect_identical(r$opts$password, "pw-xyz")
+    for (o in names(.enaCurlTimeouts)) expect_equal(r$opts[[o]], .enaCurlTimeouts[[o]], info = o)
+  }
+  puts <- Filter(function(r) isTRUE(r$opts$upload), st$requests)
+  expect_identical(vapply(puts, `[[`, "", "url"), .ftpUrl(files$remoteName[c(1, 3)]))
+  for (r in puts) {
+    expect_true(isTRUE(r$opts$ftp_create_missing_dirs))
+    expect_false(isTRUE(r$opts$nobody))
+  }
+  expect_equal(puts[[1]]$opts$infilesize_large, 5)
+  # a SIZE check after an upload is not an upload (the reset clears upload/readfunction)
+  sizes <- Filter(function(r) isTRUE(r$opts$nobody), st$requests)
+  expect_false(any(vapply(sizes, function(r) isTRUE(r$opts$upload), TRUE)))
+  # the bytes sent are the file's bytes
+  expect_identical(st$uploaded[[.ftpUrl(files$remoteName[3])]], readBin(files$path[3], raw(), 100))
+})
+
+test_that("a failed upload is retried on a FRESH connection, then succeeds", {
+  files <- ftpFiles(1L, 5L)
+  tries <- 0L
+  st <- fakeCurl(function(url, o) {
+    if (isTRUE(o$nobody)) return("Remote file not found")
+    tries <<- tries + 1L
+    if (tries < 3L) "Connection reset by peer" else list()
+  })
+  do.call(local_mocked_bindings, c(st$mocks, list(.package = "curl")))
+  msgs <- testthat::capture_messages(u <- enaUpload(files, list(user = "u", password = "p")))
+  expect_identical(u$action, "uploaded")
+  expect_identical(tries, 3L)
+  expect_identical(st$handles, 3L)                     # the first + one fresh handle per retry
+  expect_identical(st$pools, 3L)
+  expect_true(any(grepl("attempt 1/3.*Connection reset by peer", msgs)))
+})
+
+test_that("an upload failing every attempt stops, naming the file, after exactly 3 tries", {
+  files <- ftpFiles(2L, c(5L, 7L))
+  n <- 0L
+  put <- function(path, remoteName, creds) { n <<- n + 1L; stop("426 Failure writing network stream") }
+  err <- tryCatch(suppressMessages(enaUpload(files, list(user = "u", password = "p"),
+                                             remoteSize = function(...) NA_real_, put = put)),
+                  error = function(e) conditionMessage(e))
+  expect_identical(n, 3L)                              # never moved on to the 2nd file
+  expect_match(err, files$path[1], fixed = TRUE)
+  expect_match(err, "3 attempts")
+  expect_match(err, "426 Failure writing network stream", fixed = TRUE)
+})
+
+test_that("enaUpload prints one progress line per file and a summary, never the password", {
+  files <- ftpFiles()
+  sizeOf <- function(remoteName, creds) if (remoteName == files$remoteName[2]) 7 else NA_real_
+  msgs <- testthat::capture_messages(
+    u <- enaUpload(files, list(user = "u", password = "s3cret-pw"), remoteSize = sizeOf,
+                   put = function(path, remoteName, creds) invisible(TRUE)))
+  expect_length(grep("^enaUpload \\[[ 0-9]+/3\\]", msgs), 3L)
+  expect_match(msgs[grep("\\[1/3\\]", msgs)], "uploaded +s1_R1\\.fastq\\.gz.*ETA")
+  expect_match(msgs[grep("\\[2/3\\]", msgs)], "skipped +s2_R1\\.fastq\\.gz")
+  expect_true(any(grepl("done: 2 uploaded .* 1 skipped .* of 3 files", msgs)))
+  expect_false(any(grepl("s3cret-pw", msgs, fixed = TRUE)))
+})
+
+test_that("enaUpload refuses a missing local file BEFORE any network call", {
+  files <- ftpFiles(1L, 5L)
+  files <- rbind(files, data.frame(path = "/nonexistent/b.fastq.gz", remoteName = "b.fastq.gz"))
+  called <- FALSE
+  expect_error(enaUpload(files, list(user = "u", password = "p"),
+                         remoteSize = function(...) { called <<- TRUE; NA_real_ },
+                         put = function(...) TRUE),
+               "/nonexistent/b.fastq.gz", fixed = TRUE)
+  expect_false(called)
 })
