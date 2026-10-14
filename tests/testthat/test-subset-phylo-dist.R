@@ -48,3 +48,54 @@ test_that("readPhyloDist fails loudly when the backing directory is gone", {
              pd.file = "pd.desc", tip.label = c("t1", "t2"))
   expect_error(readPhyloDist(pd), "missing at")
 })
+
+# ---------------------------------------------------------------------------
+# Portability (refactor 1A): the distance cache must survive a move of the whole
+# project (cache + work dirs), and the moved bigmemory matrix must ATTACH from the
+# new location. The work dir sits under the probe root, alongside the cache, exactly
+# as phyloWorkDir() puts it under cachePath(sim) in a real run.
+# ---------------------------------------------------------------------------
+
+# The probe deletes BOTH roots when it returns, so everything that must touch the moved
+# files happens INSIDE run(), while B still exists. `seen` records it per call.
+.pdRun <- function(tr, seen) {
+  function(root) {
+    res <- withr::with_options(list(reproducible.cachePath = file.path(root, "cache")),
+      subsetPhyloDist(tr, file.path(root, "phyloWork", "pd-abc123"), nworker = 1))
+    k <- length(seen$calls) + 1L
+    seen$calls[[k]] <- list(
+      root = root, res = res,
+      descDir = tryCatch(dget(file.path(res$pd.wd, res$pd.file))@description$dirname,
+                         error = function(e) conditionMessage(e)),
+      dis = tryCatch(readPhyloDist(res), error = function(e) e),
+      # iCAMP's own access path: dget() the descriptor and attach it, no backingpath
+      icampDim = tryCatch(dim(bigmemory::attach.big.matrix(
+        dget(file.path(res$pd.wd, res$pd.file)))), error = function(e) e))
+    res
+  }
+}
+
+test_that("distance cache survives a move and the moved matrix attaches", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(11); tr <- ape::rtree(6); tr$tip.label <- paste0("t", 1:6)
+  seen <- new.env(); seen$calls <- list()
+  res <- suppressMessages(probeCacheAfterMove(.pdRun(tr, seen)))
+  expect_identical(res, c(first = TRUE, afterMove = FALSE))
+  b <- seen$calls[[2]]
+  expect_identical(b$res$pd.wd, file.path(b$root, "phyloWork", "pd-abc123"))
+  expect_true(is.matrix(b$dis), info = if (inherits(b$dis, "error")) conditionMessage(b$dis))
+  expect_identical(dim(b$dis), c(6L, 6L))
+  co <- stats::cophenetic(tr)[b$res$tip.label, b$res$tip.label]
+  expect_equal(unname(b$dis), unname(co), tolerance = 1e-6)
+})
+
+test_that("the descriptor dirname is rewritten to the new wd", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(12); tr <- ape::rtree(6); tr$tip.label <- paste0("t", 1:6)
+  seen <- new.env(); seen$calls <- list()
+  res <- suppressMessages(probeCacheAfterMove(.pdRun(tr, seen)))
+  expect_identical(res[["afterMove"]], FALSE)   # the rewrite only matters on a HIT
+  b <- seen$calls[[2]]
+  expect_identical(sub("/+$", "", b$descDir), b$res$pd.wd)
+  expect_equal(b$icampDim, c(6, 6))
+})
