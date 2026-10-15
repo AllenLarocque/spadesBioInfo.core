@@ -8,9 +8,16 @@
 #' @param wd the content-keyed work directory (see [phyloWorkDir()]); must live where the
 #'   cache can travel with it (under `cachePath`).
 #' @param nworker passed to `iCAMP::pdist.big()`; part of the cache key.
+#' @param cachePath the cache repository, passed to `reproducible::Cache()` explicitly so a
+#'   caller's own root (normally `cachePath(sim)`) is used, never an ambient default.
+#' @details If `wd` does not hold the backing files (`pd.bin`, `pd.desc`,
+#'   `pd.taxon.name.csv`), a cache HIT would hand back a result pointing at nothing -- e.g. a
+#'   second root sharing the cache, or a work dir deleted without its entry. The call is
+#'   then made with `useCache = "overwrite"`: recompute into `wd` and re-save.
 #' @return the iCAMP::pdist.big list: tip.label, pd.wd (= `wd`), pd.file, pd.name.file.
 #' @export
-subsetPhyloDist <- function(tree, wd, nworker = 1) {
+subsetPhyloDist <- function(tree, wd, nworker = 1,
+                            cachePath = getOption("reproducible.cachePath")) {
   if (length(tree$tip.label) < 2L) stop("subsetPhyloDist: tree must have at least 2 tips.")
   dir.create(wd, showWarnings = FALSE, recursive = TRUE)
   # iCAMP::pdist.big REFUSES a wd that already holds its pd.* artifacts, so they are
@@ -35,23 +42,42 @@ subsetPhyloDist <- function(tree, wd, nworker = 1) {
   # moved or restored project missed on every distance build. Only `basename(wd)` is
   # keyed: phyloWorkDir()/contentWorkDir() names the directory from its content, so the
   # basename already says WHICH distance this is, independent of where it lives.
+  #
+  # The key does not see the FILES, so a hit is only trusted when `wd` holds them. Without
+  # them (another root sharing this cache; wd deleted but its entry kept) the hit would be a
+  # dangling pointer and readPhyloDist() would stop -- so recompute and re-save instead.
+  # useCache = FALSE (caching off) is respected either way.
+  useCache <- getOption("reproducible.useCache", TRUE)
+  if (!isFALSE(useCache) && !all(file.exists(file.path(wd, .pdistBackingFiles))))
+    useCache <- "overwrite"
   res <- reproducible::Cache(buildPdistBig, tree = tree, wd = wd, nworker = nworker,
                              omitArgs = "wd", .cacheExtra = list(wdKey = basename(wd)),
+                             cachePath = cachePath, useCache = useCache,
                              userTags = c("subsetPhyloDist", "pdist.big"))
   # A HIT returns the pd.wd recorded when the entry was SAVED, which after a move is the
   # old root. pdist.big's result and its bigmemory descriptor both embed that absolute
   # path, so both are rebased onto the current `wd` right here, after the cached call.
   res$pd.wd <- wd
-  .repointBigDescriptors(wd)
+  repointBigDescriptors(wd)
   res
 }
 
-# Rewrite the `dirname` of every bigmemory descriptor (*.desc) in `wd` to `wd`.
-# bigmemory stores the backing file's ABSOLUTE directory in the descriptor, and both
-# attach.big.matrix() and iCAMP's own dget()-then-attach use it. After the work dir is
-# moved, the descriptor still points at the old location; this makes it point here.
-# Idempotent: a descriptor that already names `wd` is left untouched.
-.repointBigDescriptors <- function(wd) {
+# What iCAMP::pdist.big() writes into wd with its default file names: the bigmemory backing
+# file and descriptor (both needed by readPhyloDist()) and the taxon-name table iCAMP reads.
+.pdistBackingFiles <- c("pd.bin", "pd.desc", "pd.taxon.name.csv")
+
+#' Re-point bigmemory descriptors at the directory they now live in
+#'
+#' bigmemory stores the backing file's ABSOLUTE directory in each descriptor (`*.desc`),
+#' and `attach.big.matrix()` on a `dget()`'d descriptor -- iCAMP's own access path -- uses
+#' it. After a work dir is moved (or restored from a cache under another root), the
+#' descriptor still names the old location. This rewrites the `dirname` of every `*.desc`
+#' in `wd` to `wd`. Call it right after any cached call whose result lives in `wd`.
+#' Idempotent: a descriptor that already names `wd` is left untouched.
+#' @param wd the directory holding the descriptor(s) and their backing files.
+#' @return `wd`, invisibly.
+#' @export
+repointBigDescriptors <- function(wd) {
   here <- sub("/+$", "", normalizePath(wd, winslash = "/", mustWork = TRUE))
   for (f in list.files(wd, pattern = "\\.desc$", full.names = TRUE)) {
     desc <- dget(f)
