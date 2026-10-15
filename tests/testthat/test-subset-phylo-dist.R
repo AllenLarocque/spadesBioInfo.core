@@ -99,3 +99,59 @@ test_that("the descriptor dirname is rewritten to the new wd", {
   expect_identical(sub("/+$", "", b$descDir), b$res$pd.wd)
   expect_equal(b$icampDim, c(6, 6))
 })
+
+# ---------------------------------------------------------------------------
+# Fix round 2 (core 0.1.38): the key is tree + nworker + basename(wd), so a SECOND root
+# with the same tree and the same cache can HIT an entry whose wd in that root holds no
+# backing files. That must recompute (and re-save), not hand back a dangling result.
+# ---------------------------------------------------------------------------
+
+test_that("a hit whose wd lacks the backing files recomputes instead of failing", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(21); tr <- ape::rtree(6); tr$tip.label <- paste0("t", 1:6)
+  base <- tempfile("pd-shared-"); dir.create(base)
+  on.exit(unlink(base, recursive = TRUE), add = TRUE)
+  cache <- file.path(base, "cache")                      # ONE cache, two roots
+  wd1 <- file.path(base, "root1", "pd-same"); wd2 <- file.path(base, "root2", "pd-same")
+  r1 <- suppressMessages(subsetPhyloDist(tr, wd1, nworker = 1, cachePath = cache))
+  expect_true(attr(r1, ".Cache")$newCache)
+  r2 <- suppressMessages(subsetPhyloDist(tr, wd2, nworker = 1, cachePath = cache))
+  expect_true(attr(r2, ".Cache")$newCache)               # recomputed, not a dangling hit
+  expect_identical(r2$pd.wd, wd2)
+  dis <- readPhyloDist(r2)
+  expect_identical(dim(dis), c(6L, 6L))
+  co <- stats::cophenetic(tr)[r2$tip.label, r2$tip.label]
+  expect_equal(unname(dis), unname(co), tolerance = 1e-6)
+  # ... and a third call at wd2, now populated, is a plain hit again
+  r3 <- suppressMessages(subsetPhyloDist(tr, wd2, nworker = 1, cachePath = cache))
+  expect_false(attr(r3, ".Cache")$newCache)
+})
+
+test_that("explicit cachePath is used", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(22); tr <- ape::rtree(6); tr$tip.label <- paste0("t", 1:6)
+  base <- tempfile("pd-cp-"); dir.create(base)
+  on.exit(unlink(base, recursive = TRUE), add = TRUE)
+  mine <- file.path(base, "mine"); other <- file.path(base, "other")
+  withr::with_options(list(reproducible.cachePath = other),
+    suppressMessages(subsetPhyloDist(tr, file.path(base, "wd"), nworker = 1, cachePath = mine)))
+  expect_gt(nrow(reproducible::showCache(mine, verbose = FALSE)), 0L)
+  expect_false(dir.exists(other) &&
+                 nrow(reproducible::showCache(other, verbose = FALSE)) > 0L)
+})
+
+test_that("repointBigDescriptors is exported and rewrites a stale dirname", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(23); tr <- ape::rtree(6)
+  wdA <- tempfile("rpA-"); wdB <- tempfile("rpB-")
+  on.exit(unlink(c(wdA, wdB), recursive = TRUE), add = TRUE)
+  suppressMessages(iCAMP::pdist.big(tree = tr, wd = wdA, nworker = 1))
+  dir.create(wdB); file.copy(list.files(wdA, full.names = TRUE), wdB)
+  unlink(wdA, recursive = TRUE)
+  ns <- readLines(file.path(test_path("..", ".."), "NAMESPACE"))
+  expect_true("export(repointBigDescriptors)" %in% ns)
+  repointBigDescriptors(wdB)
+  desc <- dget(file.path(wdB, "pd.desc"))
+  expect_identical(sub("/+$", "", desc@description$dirname), normalizePath(wdB))
+  expect_equal(dim(bigmemory::attach.big.matrix(desc)), c(6, 6))
+})

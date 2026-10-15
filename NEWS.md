@@ -1,3 +1,14 @@
+# spadesBioInfo.core 0.1.38
+
+* `subsetPhyloDist()` gains `cachePath = getOption("reproducible.cachePath")`, passed to
+  `Cache()` explicitly; callers pass their own root (`cachePath(sim)`).
+* `subsetPhyloDist()` no longer trusts a cache HIT whose `wd` lacks the backing files
+  (`pd.bin`, `pd.desc`, `pd.taxon.name.csv`): it recomputes with `useCache = "overwrite"`.
+  0.1.37 keyed on `basename(wd)`, so a second root sharing the cache (or a deleted work
+  dir) hit an entry pointing at nothing and `readPhyloDist()` stopped.
+* `repointBigDescriptors(wd)` is now exported (was internal `.repointBigDescriptors`), for
+  NST/iCAMP callers that rebase their own bigmemory work dirs.
+
 # spadesBioInfo.core 0.1.37
 
 * New `probeCacheAfterMove(run)`: runs a cached computation under a temp root, copies the
