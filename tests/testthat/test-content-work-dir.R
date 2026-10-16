@@ -28,8 +28,9 @@ test_that("contentWorkDir rejects a bad cacheRoot", {
   expect_error(contentWorkDir(c("/a", "/b"), "s", "t1"), "cacheRoot")
 })
 
-test_that("phyloWorkDir still works and now delegates to contentWorkDir", {
-  # the delegation must not change the path any existing caller computes
-  expect_identical(phyloWorkDir("/cache", "whole", c("t1", "t2")),
-                   contentWorkDir("/cache", "whole", c("t1", "t2")))
+test_that("phyloWorkDir delegates to contentWorkDir over the taxa plus the artifact id", {
+  tr <- ape::read.tree(text = "(t1:1,t2:2);")
+  expect_identical(phyloWorkDir("/cache", "whole", c("t1", "t2"), tree = tr),
+                   contentWorkDir("/cache", "whole",
+                                  c("t1", "t2", paste0("tree=", phyloArtifactId(tr)))))
 })
