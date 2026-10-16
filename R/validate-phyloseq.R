@@ -56,6 +56,7 @@ validatePsRaw <- function(ps, ranks) {
   if (phyloseq::nsamples(ps) < 1L) {
     stop("ps_raw has no samples (likely a sample-name mismatch between otu_table and sample_data).")
   }
+  .rejectBadSampleIds(phyloseq::sample_names(ps), "ps_raw")
   if (is.null(phyloseq::phy_tree(ps, errorIfNULL = FALSE))) {
     stop("ps_raw has no phylogenetic tree.")
   }
@@ -65,5 +66,49 @@ validatePsRaw <- function(ps, ranks) {
          " required by this run's reference (it has: ",
          paste(phyloseq::rank_names(ps), collapse = ", "), ").")
   }
+  invisible(TRUE)
+}
+
+#' Refuse sample ids phyloseq cannot carry safely. Not exported.
+#'
+#' Two shapes, each with its own message:
+#'
+#' * **NA, empty ("") or whitespace-only ids.** They are not ids: `sample_data(ps)["", ]`
+#'   silently returns an all-NA row named "NA", and an NA sample name without metadata passes
+#'   `validObject()`.
+#' * **Integer-like ids ("1", "02", ...).** phyloseq (1.56) cannot carry them:
+#'   `sample_data(<data.frame>)` renames rows to `sa1..` whenever they equal
+#'   `as.character(1:n)`, and `[`,sample_data rebuilds through `data.frame(x)[i, j]`, where R
+#'   stores "1".."n" as AUTOMATIC row names. So `prune_samples(c("1","2"), ps)` returns all-NA
+#'   metadata with rownames "NA","NA.1" that fails `validObject()` -- and ANY id set containing
+#'   "1" is exposed, because a prune down to {"1"} triggers the rename.
+#'
+#' Both are rejected at every contract boundary (validatePsRaw, and so every validator built on
+#' it; validatePsBySubset; validateBySample; joinSampleTables) rather than half-supported.
+#'
+#' @param ids character sample ids.
+#' @param who what is being checked, for the message (e.g. `"ps_raw"`, `"validateBySample: alphaBySample"`).
+#' @return invisibly TRUE.
+#' @noRd
+.rejectBadSampleIds <- function(ids, who) {
+  blank <- is.na(ids) | !nzchar(trimws(ids))
+  if (any(blank)) {
+    shapes <- c(`NA` = sum(is.na(ids)), empty = sum(!is.na(ids) & !nzchar(ids)),
+                `whitespace-only` = sum(!is.na(ids) & nzchar(ids) & !nzchar(trimws(ids))))
+    shapes <- shapes[shapes > 0]
+    stop(who, " has ", sum(blank), " NA, empty or whitespace-only sample id(s) (",
+         paste(names(shapes), shapes, sep = ": ", collapse = ", "),
+         "). Every sample needs a real, non-blank name: phyloseq indexes blank names silently ",
+         "(sample_data(ps)[\"\", ] returns an all-NA row named \"NA\"). Fix them upstream, ",
+         "before building ps_raw.", call. = FALSE)
+  }
+  bad <- unique(ids[grepl("^[0-9]+$", ids)])
+  if (length(bad))
+    stop(who, " has ", length(bad), " integer-like sample id(s) (",
+         paste(utils::head(bad, 5L), collapse = ", "), if (length(bad) > 5L) ", ..." else "",
+         "). phyloseq rewrites or corrupts integer-like sample names on construction and on ",
+         "subsetting (sample_data() renames them to sa1..; prune_samples() can return all-NA ",
+         "metadata). Prefix them (e.g. \"S1\") upstream, before building ps_raw.",
+         call. = FALSE)
   invisible(TRUE)
 }
