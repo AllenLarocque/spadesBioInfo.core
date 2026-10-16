@@ -1,7 +1,7 @@
 Package: spadesBioInfo.core
 Type: Package
 Title: Shared Contracts and Helpers for the spades_bioinformatics Workbench
-Version: 0.1.40
+Version: 0.1.41
 Authors@R: person("Allen", "Larocque", email = "allen.larocque@gmail.com", role = c("aut", "cre"))
 Description: Load-bearing contracts (phyloseq validation, the tidy result
     contract), the study-design specification type, and the saveResult output
@@ -28,4 +28,6 @@ Suggests:
     withr,
     lme4,
     callr,
-    pkgload
+    pkgload,
+    data.table,
+    tibble

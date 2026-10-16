@@ -1,3 +1,31 @@
+# spadesBioInfo.core 0.1.41
+
+* New exported `taxonAnnotationFrame(ps, tables, columns)`: a NATIVE-typed per-taxon data.frame
+  (`taxonId` first, then `columns` in the order requested, one row per taxon in `taxa_names(ps)`
+  order) for deciding subset membership and categories without writing annotations into the
+  phyloseq. Native ranks come from the `tax_table` (character, aligned by the slot's own
+  rownames); every other column comes from the one `...ByTaxon` table that carries it, with its
+  own type -- so integer partitions stay integer (sorting 2 < 10) instead of becoming text.
+  Errors name the column and its sources for: a column found nowhere; a column with two
+  sources (two tables, or the `tax_table` plus a table); a supplying table missing taxa (up to 5
+  named); bad `columns`. Extra table rows are ignored; a `ps` without a `tax_table` is accepted
+  when no rank is requested. `ps` is never modified; the result passes `validateByTaxon()` and
+  is returned visibly.
+  - ANY column served from the `tax_table` (a rank or not) is character -- the slot is a character
+    matrix. Table columns keep their type (factor level order, Date, NaN/Inf included).
+  - NA annotation values pass through unflagged: a consumer deciding membership must handle NA.
+  - Suppliers are tracked by kind (slot vs table), so a table may be named `"tax_table"`. A
+    duplicated tax_table column name and a matrix/array-valued table column are errors; the
+    missing-taxa error names the column(s) the table was needed for.
+* `validateByTaxon()` / `validateBySample()` (and so `joinSampleTables()`) accept data.table and
+  tibble tables: the duplicate-key check indexed `x[, keys, drop = FALSE]`, which a data.table
+  reads differently. `data.table` and `tibble` are added to Suggests (tests only).
+* `joinTaxonTables()` (unchanged) documents that it writes character and points to
+  `taxonAnnotationFrame()` for native types.
+* Stale comments in `validatePsRaw()` / `recordExcluded()` docs and its error text no longer say
+  the enrich modules `cbind` `FG.*` onto the `tax_table`; since 1B they publish `...ByTaxon`
+  tables.
+
 # spadesBioInfo.core 0.1.40
 
 Keyed tables for refactor plan 1B (non-mutating data flow): producers publish `...ByTaxon` /

@@ -30,10 +30,12 @@
 #' REPORTS the taxonomy that is present, so the object is the only correct source... do not
 #' harmonise them"), and that argument was wrong. Reporting still needs an independent
 #' vocabulary, because a `tax_table` column cannot be classified as a rank by inspecting its
-#' name: `enrichFunGuild` / `enrichFungalTraits` / `enrichFunFun` `cbind` ~12 `FG.*` columns
-#' onto the same `tax_table` before any filter runs, so "the taxonomy that is present" and
-#' "the columns that are present" are different sets and only the reference knows which is
-#' which. See `recordExcluded()`'s own docs for the two generations of name-based rule that
+#' name: until refactor 1B, `enrichFunGuild` / `enrichFungalTraits` / `enrichFunFun` `cbind`-ed
+#' ~12 `FG.*` columns onto the same `tax_table` before any filter ran, so "the taxonomy that is
+#' present" and "the columns that are present" were different sets and only the reference knew
+#' which was which. Since 1B they publish `...ByTaxon` tables instead (`funGuildByTaxon`, ...),
+#' but a consumer may still join annotation columns onto its own copy ([joinTaxonTables()]), so
+#' the rule stands. See `recordExcluded()`'s own docs for the two generations of name-based rule that
 #' failed. The two functions differ only in what they DO with `ranks` (check vs. record), never
 #' in where it comes from.
 #'
