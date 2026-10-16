@@ -42,10 +42,11 @@
     if (nNA)
       stop(fn, ": ", name, " key column '", k, "' has ", nNA, " NA value(s).", call. = FALSE)
   }
-  dup <- duplicated(x[, keys, drop = FALSE])
+  # Built from x[[k]] so it works on data.tables and tibbles (whose `[` differs).
+  keyCols <- lapply(stats::setNames(keys, keys), function(k) x[[k]])
+  dup <- duplicated(as.data.frame(keyCols, stringsAsFactors = FALSE, optional = TRUE))
   if (any(dup)) {
-    ex <- x[dup, keys, drop = FALSE]
-    shown <- utils::head(do.call(paste, c(unname(as.list(ex)), sep = "/")), 10L)
+    shown <- utils::head(do.call(paste, c(unname(lapply(keyCols, `[`, dup)), sep = "/")), 10L)
     stop(fn, ": ", name, " has ", sum(dup), " duplicate key combination(s) of (",
          paste(keys, collapse = ", "), "), e.g. ", paste(shown, collapse = ", "), ".",
          call. = FALSE)
@@ -147,6 +148,8 @@ validateBySample <- function(x, name, keys = "sampleId") {
 #'   `taxa_names(ps)` as a set -- else an error), never by position. A `ps` taxon
 #'   absent from the supplying table is an error listing (up to 10 of) the missing ids; table
 #'   rows for taxa not in `ps` are ignored (`ps` may be a pruned subset).
+#' * **It writes CHARACTER.** For native types (integer partitions, logical indicators) use
+#'   [taxonAnnotationFrame()], which returns a data.frame and never modifies `ps`.
 #' * Values are coerced with `as.character()` per column, because `tax_table` is a character
 #'   matrix. This differs from `as.matrix.data.frame()` (what `cbind`-ing a data.frame onto
 #'   the `tax_table` used to do), which `format()`s numeric columns to a common width (`" 2"`);
@@ -213,6 +216,129 @@ joinTaxonTables <- function(ps, tables, columns) {
   ps
 }
 
+#' A native-typed per-taxon annotation frame.
+#'
+#' The way to DECIDE things from annotations (subset membership, iCAMP categories) without
+#' writing them into the phyloseq. [joinTaxonTables()] has to write character, because a
+#' `tax_table` is a character matrix by class: integer partition labels become text and sort as
+#' text (`"10"` before `"2"`). This returns a plain data.frame instead, and never touches `ps`.
+#'
+#' * **Rows:** exactly one per taxon, in `taxa_names(ps)` order (plain `1..n` row names).
+#' * **Columns:** `taxonId` first, then `columns` in the order requested.
+#' * **Types are native.** ANY column present in `tax_table(ps)` -- a rank, or any other column
+#'   that happens to be on the slot -- is read from the `tax_table` and is therefore CHARACTER
+#'   (the slot is a character matrix), by the slot's OWN rownames aligned to `taxa_names(ps)`
+#'   (the slot ids must be exactly `taxa_names(ps)`, else an error; a duplicated column name
+#'   on the slot is an error too). Every other column comes from the one `...ByTaxon` table
+#'   that carries it, with that table's own type (integer, numeric, character, logical, factor
+#'   with its level order, Date, ...). Matrix/array-valued table columns are refused.
+#' * **NA values pass through unflagged** (and NaN/Inf likewise): an unannotated taxon is NA, not
+#'   an error. A consumer deciding membership from a column must decide what NA means.
+#' * **Exactly one source per requested column.** A column found in neither the `tax_table` nor
+#'   any table is an error; so is one supplied by two sources -- two tables, OR the `tax_table`
+#'   plus a table (unlike [joinTaxonTables()], which lets the native column win silently).
+#'   Columns a table carries but that were not requested are ignored.
+#' * **Rows matched by `taxonId`.** A supplying table without a row for some taxon of `ps` is an
+#'   error naming up to 5 ids and the column(s) it was needed for; table rows for taxa not in
+#'   `ps` are ignored (`ps` may be pruned).
+#' * Tables may be data.frames, tibbles or data.tables. A table may be NAMED anything,
+#'   including `"tax_table"`: suppliers are tracked by kind (slot vs table), not by name.
+#' * A `ps` with NO `tax_table` is accepted: then no column is native and every requested column
+#'   must come from a table (a rank column is reported as found nowhere).
+#'
+#' @param ps a phyloseq object.
+#' @param tables a named list of `...ByTaxon` data.frames (each validated by [validateByTaxon()]);
+#'   may be empty when every requested column is a native rank.
+#' @param columns non-empty character vector of column names, without NA, `""`, duplicates or
+#'   `taxonId` (the key, always included first).
+#' @return a data.frame that passes [validateByTaxon()], returned visibly.
+#' @export
+taxonAnnotationFrame <- function(ps, tables, columns) {
+  fn <- "taxonAnnotationFrame"
+  if (!methods::is(ps, "phyloseq")) stop(fn, ": `ps` is not a phyloseq object.", call. = FALSE)
+  if (missing(columns) || !is.character(columns) || !length(columns) || anyNA(columns) ||
+      !all(nzchar(columns)) || anyDuplicated(columns))
+    stop(fn, ": `columns` must be a non-empty character vector without NA, \"\" or ",
+         "duplicates.", call. = FALSE)
+  if ("taxonId" %in% columns)
+    stop(fn, ": `columns` must not include taxonId -- it is the key and is always the first ",
+         "column.", call. = FALSE)
+  .checkTableList(tables, fn)
+  for (nm in names(tables)) validateByTaxon(tables[[nm]], nm)
+
+  taxa <- phyloseq::taxa_names(ps)
+  tt <- ps@tax_table
+  native <- if (is.null(tt)) character(0) else colnames(tt)
+
+  # Resolve every column's supplier first. A supplier is a (kind, name) pair -- kind "native"
+  # (the tax_table SLOT) or "table" -- so no table name is reserved: a table that happens to be
+  # called "tax_table" is still a table.
+  srcLabel <- function(src) if (src$kind == "native") "the tax_table slot" else
+    paste0("table '", src$name, "'")
+  supplier <- list()
+  for (col in columns) {
+    srcs <- c(if (col %in% native) list(list(kind = "native", name = "tax_table")),
+              lapply(names(tables)[vapply(tables, function(t) col %in% setdiff(names(t), "taxonId"),
+                                          logical(1))],
+                     function(nm) list(kind = "table", name = nm)))
+    if (!length(srcs))
+      stop(fn, ": column '", col, "' is neither in tax_table nor supplied by any table (",
+           if (length(tables)) paste(names(tables), collapse = ", ") else "no tables given",
+           ").", call. = FALSE)
+    if (length(srcs) > 1L)
+      stop(fn, ": column '", col, "' is supplied by more than one source: ",
+           paste(vapply(srcs, srcLabel, character(1)), collapse = ", "), ".", call. = FALSE)
+    src <- srcs[[1L]]
+    # %in%, not ==: phyloseq allows NA column names on the slot, and `NA == col` is NA.
+    nNative <- sum(native %in% col)
+    if (src$kind == "native" && nNative > 1L)
+      stop(fn, ": the tax_table slot has ", nNative, " columns named '", col,
+           "'; which one is meant is ambiguous.", call. = FALSE)
+    if (src$kind == "table" && !is.null(dim(tables[[src$name]][[col]]))) {
+      v <- tables[[src$name]][[col]]
+      cls <- class(v)
+      if ("AsIs" %in% cls) cls <- unique(c("AsIs", class(unclass(v))))   # I(matrix(...))
+      stop(fn, ": column '", col, "' of table '", src$name, "' is ",
+           paste(cls, collapse = "/"), " with dim ", paste(dim(v), collapse = " x "),
+           "; an annotation column must be one value per taxon (a vector or list-column), ",
+           "not a matrix, array or data.frame.", call. = FALSE)
+    }
+    supplier[[col]] <- src
+  }
+
+  # Every supplying table must cover every taxon of ps; name the columns it was needed for.
+  for (nm in unique(unlist(lapply(supplier, function(s) if (s$kind == "table") s$name)))) {
+    miss <- setdiff(taxa, tables[[nm]]$taxonId)
+    if (length(miss)) {
+      needed <- names(supplier)[vapply(supplier, function(s) s$kind == "table" && s$name == nm,
+                                       logical(1))]
+      stop(fn, ": table '", nm, "' has no row for ", length(miss), " taxa of `ps` (",
+           paste(utils::head(miss, 5L), collapse = ", "),
+           if (length(miss) > 5L) ", ..." else "", "), needed for column(s) ",
+           paste0("'", needed, "'", collapse = ", "), ".", call. = FALSE)
+    }
+  }
+
+  out <- data.frame(taxonId = taxa, stringsAsFactors = FALSE)
+  ttRows <- NULL
+  for (col in columns) {
+    src <- supplier[[col]]
+    if (src$kind == "native") {
+      if (is.null(ttRows)) {
+        .checkSlotIds(rownames(tt), taxa, "tax_table", fn)
+        ttRows <- match(taxa, rownames(tt))
+      }
+      out[[col]] <- unname(as.character(tt@.Data[ttRows, match(col, native)]))
+    } else {
+      t <- tables[[src$name]]
+      out[[col]] <- t[[col]][match(taxa, t$taxonId)]
+    }
+  }
+  rownames(out) <- NULL
+  validateByTaxon(out, fn)
+  out
+}
+
 #' Join `...BySample` columns onto a phyloseq's `sample_data`, by `sampleId`.
 #'
 #' The consumer side of the keyed `...BySample` tables (`alphaBySample`, `phyloBySample`, ...).
@@ -260,6 +386,8 @@ joinSampleTables <- function(ps, tables, columns = NULL, subset = NULL) {
   for (nm in names(tables)) {
     t <- tables[[nm]]
     keys <- intersect(.KEYS_BY_SAMPLE, names(t))
+    # `[` below must mean data.frame row-subsetting, also for a data.table / tibble input.
+    if (is.data.frame(t) && !identical(class(t), "data.frame")) t <- as.data.frame(t)
     validateBySample(t, nm, keys = union("sampleId", keys))
     available <- c(available, setdiff(names(t), .KEYS_BY_SAMPLE))
     if ("subset" %in% names(t)) {

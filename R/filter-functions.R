@@ -14,11 +14,13 @@
 #'     WHAT was dropped without recording WHICH DOMAIN it was.
 #'   - `setdiff(colnames(tax), c("Species", "confidence"))` -- a BLOCKLIST -- was introduced to
 #'     fix that and was documented as reproducing ITS's `Kingdom..Genus` byte-for-byte. **It does
-#'     not.** `.pipelineOrder` runs `enrichFunGuild` / `enrichFungalTraits` / `enrichFunFun`
-#'     BEFORE `filterFeatures`, and each `cbind`s its own columns (`FG.Taxon`, `FG.Guild`,
-#'     `FG.TrophicMode`, the `FG.is.TM*` indicators) onto the `tax_table`. By the time a filter
-#'     runs, an ITS `tax_table` carries ~12 enrichment columns and a two-name blocklist admits
-#'     every one of them into the audit.
+#'     not.** Before refactor 1B, `.pipelineOrder` ran `enrichFunGuild` / `enrichFungalTraits` /
+#'     `enrichFunFun` BEFORE `filterFeatures`, and each `cbind`-ed its own columns (`FG.Taxon`,
+#'     `FG.Guild`, `FG.TrophicMode`, the `FG.is.TM*` indicators) onto the `tax_table`, so by the
+#'     time a filter ran an ITS `tax_table` carried ~12 enrichment columns and a two-name
+#'     blocklist admitted every one of them into the audit. Since 1B the enrich modules publish
+#'     `...ByTaxon` tables and leave `ps_raw` untouched, but any caller's `tax_table` can still
+#'     carry joined non-rank columns, so the caller's vocabulary remains the only safe source.
 #'
 #' A whitelist excludes the unknown by construction; a blocklist must enumerate it, and the set
 #' of things to enumerate grows every time anyone adds a `tax_table` column. So `ranks` now comes
@@ -61,7 +63,7 @@ recordExcluded <- function(ps, keepLogical, filter, ranks) {
          "skip the audit entirely. It deliberately has no default: a rank column cannot be ",
          "told from an enrichment column by its name, so both a Kingdom-rooted whitelist ",
          "(dropped SILVA's Domain) and a c('Species','confidence') blocklist (admitted every ",
-         "FG.* column the enrich* modules cbind onto the tax_table) were silently wrong.",
+         "non-rank column on the tax_table, e.g. joined FG.* annotations) were silently wrong.",
          call. = FALSE)
   if (is.null(ranks)) return(NULL)   # explicit opt-out; see the NULL section above
   if (!is.character(ranks) || !length(ranks))
