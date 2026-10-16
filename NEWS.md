@@ -1,3 +1,49 @@
+# spadesBioInfo.core 0.1.40
+
+Keyed tables for refactor plan 1B (non-mutating data flow): producers publish `...ByTaxon` /
+`...BySample` tables instead of writing columns back onto shared phyloseq objects, and consumers
+join only what they need, by key. Key columns are `taxonId`, `sampleId`, `subset`, `normMethod`
+(spec Amendment A.1); `method` is not a key. All new, all exported (`R/keyed-tables.R`):
+
+* `validateByTaxon(x, name)` / `validateBySample(x, name, keys = "sampleId")`: data.frame,
+  character key columns, no NA, no duplicate key combination; `keys` must be drawn from
+  `sampleId`/`subset`/`normMethod` and include `sampleId` (`method` is refused by name). Return
+  `x` invisibly; every error names `name`.
+* `joinTaxonTables(ps, tables, columns)`: appends exactly `columns`, in that order, to
+  `tax_table` by direct slot assignment + `validObject()`. Requested columns already in
+  `tax_table` (native ranks such as `Genus`) are left as they are and not joined. Every other
+  column must come from exactly one table; rows matched by `taxonId`, never by position; a `ps`
+  taxon missing from the supplying table is an error listing up to 10 ids. Values are
+  `as.character()` per column -- a declared difference from the old `cbind` path, whose
+  `as.matrix.data.frame()` `format()`-padded numerics (`" 2"`). `otu_table` is not copied.
+* `joinSampleTables(ps, tables, columns = NULL, subset = NULL)`: joins by `sampleId`; tables
+  with a `subset` key are filtered to `subset` (`NULL` is then an error); a table with zero rows
+  for the subset contributes no columns; samples missing from a table that has rows get NA (as
+  `attachPhyloMetrics()` did). Extra samples, duplicate suppliers and collisions with existing
+  `sample_data` columns are errors.
+* `validatePsFiltered(ps, ranks)`: `validatePsRaw()`'s checks (so `ranks` is required, from the
+  same independent source) plus no `FG.`/`FT.`/`FF_` annotation columns on `tax_table`.
+* `validatePsBySubset(x, name)`: a named list (unique names) of phyloseq; zero-length accepted.
+  `validatePsAlphaBySubset(x)` additionally refuses any `alphaMetricColumns()` /
+  `phyloMetricColumns()` column on `sample_data`.
+* `alphaMetricColumns()`: every column calcAlphaDiversity can emit under any parameters (Hill
+  q0-q2 with `_lo`/`_hi`, `dominance_DBP`, `breakaway_*`, all `estimate_richness` measure names,
+  the oracle arm's columns) -- a superset, not a function of the run's parameters.
+  `phyloMetricColumns()`: calcPhyloDiversity's 10 metrics plus their `_core` variants.
+* Both joins align on the target slot's OWN rownames (`tax_table` / `sample_data`), after
+  checking they are exactly `taxa_names(ps)` / `sample_names(ps)`: a directly assigned slot can
+  hold the same ids in a different order and still pass `validObject()`. `joinSampleTables()`
+  rebuilds with `methods::new("sample_data", .)` so ids like `"1"` and unused factor levels
+  survive. The validators reject duplicate, NA or empty column names.
+* Integer-like sample ids (`^[0-9]+$`, e.g. `"1"`) are refused by `validatePsRaw()` (and so
+  `validatePsFiltered()`), `validatePsBySubset()`, `validateBySample()` and `joinSampleTables()`.
+  phyloseq 1.56 cannot carry them: `sample_data()` renames `"1".."n"` to `sa1..`, and
+  `prune_samples()` can return all-NA metadata that fails `validObject()`. Prefix them
+  (e.g. `"S1"`) upstream, before building ps_raw.
+* The same four boundaries also refuse NA, empty (`""`) and whitespace-only sample ids:
+  `sample_data(ps)["", ]` silently returns an all-NA row named `"NA"`, and NA sample names
+  without metadata passed the ps validators.
+
 # spadesBioInfo.core 0.1.39
 
 * `phyloWorkDir()` names a phylogenetic distance directory from the taxa set AND the tree. New
