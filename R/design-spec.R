@@ -4,9 +4,16 @@
 #'   per-response specs, each an optional list(scope, family, link, transform, exclude).
 #' @param structures NAMED list of one-sided formulas.
 #' @param family,link default error family/link, inherited by responses that don't override.
+#' @param roles optional study roles, so modules name no study column. `NULL` (default) adds no
+#'   `roles` element (the object is identical to one built before roles existed). Otherwise a list
+#'   with `id` (required, the sample-id column), `group` (required; a column name, or a list with
+#'   `column` plus optional `label`, `levels`, `reference`, `positions` (named by level) and
+#'   `continuous`), and optional `strata`, `unit`, `covariates`. Read with [designRole()] and
+#'   [designGroup()].
 #' @return a list of class "designSpec"; `$responses` is the NORMALIZED named list.
 #' @export
-designSpec <- function(responses, structures, family = "gaussian", link = "identity") {
+designSpec <- function(responses, structures, family = "gaussian", link = "identity",
+                       roles = NULL) {
   if (!is.list(structures) || is.null(names(structures)) || any(!nzchar(names(structures))))
     stop("`structures` must be a named list of one-sided formulas.")
   for (s in structures) if (!inherits(s, "formula")) stop("Every element of `structures` must be a formula.")
@@ -49,9 +56,54 @@ designSpec <- function(responses, structures, family = "gaussian", link = "ident
   })
   names(norm) <- names(responses)
 
-  structure(list(responses = norm, structures = structures, family = family, link = link),
-            class = "designSpec")
+  out <- list(responses = norm, structures = structures, family = family, link = link)
+  if (!is.null(roles)) out$roles <- .normaliseRoles(roles)
+  structure(out, class = "designSpec")
 }
+
+.normaliseRoles <- function(roles) {
+  if (!is.list(roles) || is.null(roles$id) || !nzchar(roles$id[[1]]))
+    stop("`roles$id` (the sample-id column) is required.", call. = FALSE)
+  g <- roles$group
+  if (is.character(g) && length(g) == 1L) g <- list(column = g)
+  if (!is.list(g) || is.null(g$column) || !nzchar(g$column[[1]]))
+    stop("`roles$group$column` (the grouping column) is required.", call. = FALSE)
+  group <- list(column = g$column, label = if (is.null(g$label)) g$column else g$label,
+                levels = g$levels, reference = g$reference,
+                positions = g$positions, continuous = g$continuous)
+  if (!is.null(group$reference) && !group$reference %in% group$levels)
+    stop("`roles$group$reference` must be one of `roles$group$levels`.", call. = FALSE)
+  if (!is.null(group$positions)) {
+    if (is.null(group$levels))
+      stop("`roles$group$positions` requires `roles$group$levels`.", call. = FALSE)
+    if (!setequal(names(group$positions), group$levels))
+      stop("names of `roles$group$positions` must equal `roles$group$levels` (as a set).",
+           call. = FALSE)
+  }
+  list(id = roles$id, group = group, strata = roles$strata, unit = roles$unit,
+       covariates = roles$covariates)
+}
+
+#' Resolve a study role to its column name(s).
+#' @param ds a `designSpec` (or `NULL`).
+#' @param role one of "id", "group", "continuous", "strata", "unit", "covariates".
+#' @param override optional explicit value; when non-NULL and not all `NA` it wins.
+#' @return an unnamed `character` (length > 1 possible for "covariates"); `NA_character_` when
+#'   the role is absent.
+#' @export
+designRole <- function(ds, role, override = NA) {
+  role <- match.arg(role, c("id", "group", "continuous", "strata", "unit", "covariates"))
+  if (!is.null(override) && !all(is.na(override))) return(unname(as.character(override)))
+  r <- ds$roles
+  v <- switch(role, group = r$group$column, continuous = r$group$continuous, r[[role]])
+  if (is.null(v)) NA_character_ else unname(as.character(v))
+}
+
+#' The normalised group role: list(column, label, levels, reference, positions, continuous).
+#' @param ds a `designSpec` (or `NULL`).
+#' @return the list, or `NULL` when `ds` has no roles.
+#' @export
+designGroup <- function(ds) ds$roles$group
 
 #' @export
 designResponses  <- function(x) names(x$responses)

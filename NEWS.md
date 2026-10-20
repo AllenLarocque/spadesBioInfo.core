@@ -1,3 +1,19 @@
+# spadesBioInfo.core 0.1.42
+
+* `designSpec()` gains `roles` (id, group, strata, unit, covariates; `group` may be a column name or
+  a list with label/levels/reference/positions/continuous). `roles = NULL` leaves the object
+  unchanged. New exported `designRole(ds, role, override = NA)` (unnamed character; `NA_character_`
+  when absent; a non-NA `override` wins) and `designGroup(ds)` (normalised group list or NULL).
+* `attachSequencingDepth()` loses its `idCol = "unique_name"` default: `idCol` is now required.
+
+* Also in this release (documentation only): after 0.1.41 was published, the roxygen comments in
+  `keyed-tables.R` (header) and `response-routing.R` (`preflightResponses()`'s
+  `datBySubset`) were updated for refactor 1B: the retired `ps_metrics_bySubset` accumulator is
+  now `ps_alphaBySubset` + `alphaBySample` / `phyloBySample` (refactor 1B Task 6, `8e0eb81`).
+* `resolveResponseSource()` documents that its `source` value `"ps_metrics"` (which becomes the
+  `sample_source` provenance column of fitResponseModels' outputs) is a RETAINED LEGACY LABEL for
+  the community-metrics table. The value is unchanged: output identity depends on it.
+
 # spadesBioInfo.core 0.1.41
 
 * New exported `taxonAnnotationFrame(ps, tables, columns)`: a NATIVE-typed per-taxon data.frame

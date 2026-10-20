@@ -2,7 +2,8 @@
 #
 # Producers publish their per-taxon / per-sample results as KEYED data.frames (`...ByTaxon`,
 # `...BySample`) instead of cbind-ing them onto the shared phyloseq (`ps_raw`, `coreMetadata`,
-# `ps_metrics_bySubset`). A consumer that needs some of those columns joins exactly the ones it
+# the per-subset alpha/phylo accumulator, now `ps_alphaBySubset` + `alphaBySample` /
+# `phyloBySample`). A consumer that needs some of those columns joins exactly the ones it
 # needs, BY KEY, onto its own copy -- `joinTaxonTables()` / `joinSampleTables()`.
 #
 # Key names are fixed by the naming standard (spec 2026-10-13, Amendment A.1):
