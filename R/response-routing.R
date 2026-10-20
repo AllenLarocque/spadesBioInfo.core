@@ -39,7 +39,7 @@
 #' @return `core` with a `sequencing_depth` column appended. Row count and row
 #'   order are unchanged.
 #' @export
-attachSequencingDepth <- function(core, ps, idCol = "unique_name") {
+attachSequencingDepth <- function(core, ps, idCol) {
   if (!idCol %in% names(core))
     stop("attachSequencingDepth: '", idCol, "' is not a column of the core table.",
          call. = FALSE)
@@ -77,13 +77,19 @@ attachSequencingDepth <- function(core, ps, idCol = "unique_name") {
 #' @param metricsDf     data.frame of community-derived metrics (filtered set).
 #'
 #' @return list(data, source, n_obs, n_available): the rows to fit, which table
-#'   they came from ("coreMetadata" or "ps_metrics"), how many rows are fitted,
+#'   they came from ("coreMetadata" or "ps_metrics" -- a retained legacy label for the
+#'   community-metrics table, see the comment in the body), how many rows are fitted,
 #'   and how many were available in that source before NA-dropping.
 #' @export
 resolveResponseSource <- function(response, coreResponses, coreMetadata, metricsDf) {
   stopifnot(is.character(response), length(response) == 1L)
   isCore <- length(coreResponses) > 0L && response %in% coreResponses
   src    <- if (isCore) coreMetadata else metricsDf
+  # "ps_metrics" is a RETAINED LEGACY PROVENANCE LABEL, not an object name: since refactor 1B the
+  # metrics come from ps_alphaBySubset joined with alphaBySample/phyloBySample (the old
+  # per-subset metrics accumulator is retired). The value is kept because it is written into the
+  # `sample_source` column of fitResponseModels' coefficients/glance outputs, so renaming it would
+  # change output identity. Do not rename it without a deliberate, documented output change.
   srcNm  <- if (isCore) "coreMetadata" else "ps_metrics"
 
   usable <- response %in% names(src) && !all(is.na(src[[response]]))
@@ -124,7 +130,8 @@ resolveResponseSource <- function(response, coreResponses, coreMetadata, metrics
 #' everything, rather than one problem surfacing per run.
 #'
 #' @param datBySubset  named list of data.frames, one per subset, each the
-#'   `sample_data` of the corresponding `ps_metrics_bySubset` entry.
+#'   community-metrics frame of that subset (since refactor 1B: `ps_alphaBySubset[[subset]]`
+#'   with its `alphaBySample` / `phyloBySample` rows joined by `joinSampleTables()`).
 #' @param ds            the designSpec.
 #' @param coreResponses character vector of responses fitted on `coreMetadata`.
 #' @param coreMetadata  the full core table, or NULL.
