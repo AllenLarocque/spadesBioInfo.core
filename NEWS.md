@@ -1,3 +1,12 @@
+# spadesBioInfo.core 0.1.43
+
+* New `readCorrections()` and `applyCorrections()`: apply a CSV of field-data fixes (set/drop, each checked
+  against the expected current value) to named raw tables, returning the corrected tables and a log.
+
+* `designSpec()`: a group `reference` given without `levels` now errors with
+  "`roles$group$reference` requires `roles$group$levels`" instead of the misleading
+  "must be one of `roles$group$levels`". Message only: both cases still error.
+
 # spadesBioInfo.core 0.1.42
 
 * `designSpec()` gains `roles` (id, group, strata, unit, covariates; `group` may be a column name or
