@@ -71,8 +71,12 @@ designSpec <- function(responses, structures, family = "gaussian", link = "ident
   group <- list(column = g$column, label = if (is.null(g$label)) g$column else g$label,
                 levels = g$levels, reference = g$reference,
                 positions = g$positions, continuous = g$continuous)
-  if (!is.null(group$reference) && !group$reference %in% group$levels)
-    stop("`roles$group$reference` must be one of `roles$group$levels`.", call. = FALSE)
+  if (!is.null(group$reference)) {
+    if (is.null(group$levels))
+      stop("`roles$group$reference` requires `roles$group$levels`.", call. = FALSE)
+    if (!group$reference %in% group$levels)
+      stop("`roles$group$reference` must be one of `roles$group$levels`.", call. = FALSE)
+  }
   if (!is.null(group$positions)) {
     if (is.null(group$levels))
       stop("`roles$group$positions` requires `roles$group$levels`.", call. = FALSE)

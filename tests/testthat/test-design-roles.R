@@ -61,6 +61,8 @@ test_that("invalid roles error, naming the role", {
                                               positions = c(a = 1, c = 2)))), "positions")
   expect_error(mk(list(id = "s", group = list(column = "g", positions = c(a = 1)))),
                "positions.*levels")
+  expect_error(mk(list(id = "s", group = list(column = "g", reference = "a"))),
+               "reference` requires `roles\\$group\\$levels")
 })
 
 test_that("attachSequencingDepth has no idCol default", {
