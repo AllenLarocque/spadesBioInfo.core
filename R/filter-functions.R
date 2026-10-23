@@ -111,7 +111,7 @@ recordExcluded <- function(ps, keepLogical, filter, ranks) {
 #'   object) — callers must guard `is.null(res$ps)` before `phyloseq::ntaxa()`. Mirrors
 #'   [filterByPrevalence()].
 #' @export
-filterByTaxon <- function(ps, rank = "Kingdom", keep, ranks) {
+filterByTaxon <- function(ps, rank, keep, ranks) {
   tax <- as.data.frame(unclass(phyloseq::tax_table(ps)), stringsAsFactors = FALSE)
   if (!rank %in% colnames(tax))
     stop("filterByTaxon: rank '", rank, "' is not a tax_table column.")

@@ -1,3 +1,10 @@
+# spadesBioInfo.core 0.1.44
+
+* New helpers for refactor 1E W5d's "auto" / NA defaults: `referenceRankSets()` (root, glom and
+  assembly ranks from a reference's rank vector), `wholeScopeResponses()`, `isAuto()`,
+  `requireParam()` and `writeResolvedParams()` (writes the `resolvedParams` table).
+* `filterByTaxon()` loses its `rank = "Kingdom"` default: `rank` is now required.
+
 # spadesBioInfo.core 0.1.43
 
 * New `readCorrections()` and `applyCorrections()`: apply a CSV of field-data fixes (set/drop, each checked
