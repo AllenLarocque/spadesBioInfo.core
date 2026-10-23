@@ -21,7 +21,8 @@ referenceRankSets <- function(ranks) {
 #' @export
 wholeScopeResponses <- function(ds) {
   keep <- vapply(ds$responses, function(sp) identical(sp$scope, "whole"), logical(1))
-  names(ds$responses)[keep]
+  nm <- names(ds$responses)[keep]
+  if (is.null(nm)) character(0) else nm
 }
 
 #' Is a parameter value the string `"auto"`?
