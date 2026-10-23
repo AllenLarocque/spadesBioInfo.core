@@ -1,3 +1,10 @@
+# spadesBioInfo.core 0.1.45
+
+* New `psSlice()`, `psRestore()`, `sliceContract()` and `dropCacheAttr()`: hand a cached step only the
+  phyloseq parts and columns it reads, rebuild the whole object afterwards, and test that each declared
+  item is needed.
+* `wholeScopeResponses()` returns `character(0)`, not `NULL`, for a design with no responses.
+
 # spadesBioInfo.core 0.1.44
 
 * New helpers for refactor 1E W5d's "auto" / NA defaults: `referenceRankSets()` (root, glom and
