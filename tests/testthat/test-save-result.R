@@ -23,3 +23,11 @@ test_that("saveResult skips NULL plots without error", {
   base <- saveResult(dir, "myMod", plots = list(none = NULL))
   expect_false(file.exists(file.path(base, "plots", "none.rds")))
 })
+
+test_that("saveResult warns, naming the file, when a plot cannot be drawn", {
+  dir <- withr::local_tempdir()
+  bad <- ggplot2::ggplot(data.frame(x = 1:3), ggplot2::aes(x, noSuchColumn)) +
+         ggplot2::geom_point()
+  expect_warning(base <- saveResult(dir, "myMod", plots = list(broken = bad)), "broken\\.png")
+  expect_true(file.exists(file.path(base, "plots", "broken.rds")))
+})

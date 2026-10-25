@@ -44,7 +44,8 @@ psSlice <- function(ps, parts, sampleCols = character(), taxCols = NULL) {
 #' Rebuild a whole phyloseq around a cached result.
 #'
 #' Prunes `full` to `result`'s taxa and samples (in `result`'s order), then installs `result`'s
-#' `otu_table` by slot assignment. `result`'s attributes, including `.Cache`, are copied on.
+#' `otu_table` by slot assignment. `result`'s attributes, including `.Cache`, are copied onto the
+#' top level; the `otu_table` slot carries none of `.Cache`, `tags` or `callInCache`.
 #'
 #' @param result a phyloseq (or list) returned by a cached step on a [psSlice()].
 #' @param full the unsliced phyloseq (or list; matched by name).
@@ -67,7 +68,10 @@ psRestore <- function(result, full) {
   }
   if (!is.null(out@sam_data) && !identical(phyloseq::sample_names(out), sn))
     out@sam_data <- out@sam_data[sn, , drop = FALSE]
-  out@otu_table <- phyloseq::otu_table(result)
+  ot <- phyloseq::otu_table(result)
+  # Cache() attributes stay on the top level only, so the slot digests the same on hit and miss
+  for (a in c(".Cache", "tags", "callInCache")) attr(ot, a) <- NULL
+  out@otu_table <- ot
   methods::validObject(out)
   at <- attributes(result)
   extra <- setdiff(names(at), c(methods::slotNames(result), "class", "names", "dim", "dimnames"))
