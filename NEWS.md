@@ -1,3 +1,14 @@
+# spadesBioInfo.core 0.1.46
+
+* New `availableRamGb()` and `orElse()`, `manifestPathCols()`, `manifestRootName()`,
+  `checkedManifestKey()`, `manifestKeyStrings()` and `pruneSkippedResponses()`: one shared copy
+  of helpers that were duplicated in modules. Behaviour and manifest-key strings are unchanged.
+* New `collectWarnings()`: muffles an expression's warnings and reports each distinct one once,
+  with its count.
+* `psRestore()` no longer leaves `Cache()` attributes on the `otu_table` slot, so the slot is
+  identical on a cache hit and a miss.
+* `saveResult()` warns, naming the file, when a plot's PNG cannot be written (it was silent).
+
 # spadesBioInfo.core 0.1.45
 
 * New `psSlice()`, `psRestore()`, `sliceContract()` and `dropCacheAttr()`: hand a cached step only the

@@ -140,3 +140,15 @@ test_that("sliceContract emits no phantom rows", {
 test_that("wholeScopeResponses is character(0) on an empty design", {
   expect_identical(wholeScopeResponses(list(responses = list())), character(0))
 })
+
+test_that("psRestore keeps Cache attributes off the otu_table slot", {
+  ps <- mkPs(); cp <- withr::local_tempdir()
+  f <- function(p) phyloseq::otu_table(p)
+  miss <- psRestore(reproducible::Cache(f, psSlice(ps, "otu"), cachePath = cp), ps)
+  hit  <- psRestore(reproducible::Cache(f, psSlice(ps, "otu"), cachePath = cp), ps)
+  for (a in c(".Cache", "tags", "callInCache")) {
+    expect_null(attr(miss@otu_table, a)); expect_null(attr(hit@otu_table, a))
+  }
+  expect_identical(digest::digest(miss@otu_table), digest::digest(hit@otu_table))
+  expect_false(is.null(attr(hit, ".Cache")))
+})

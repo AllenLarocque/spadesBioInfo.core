@@ -9,7 +9,8 @@
 #' @param moduleName subdirectory for this module's artifacts.
 #' @param tables named list of data.frames.
 #' @param models named list of fitted model objects.
-#' @param plots  named list of ggplot/patchwork objects (NULL entries skipped).
+#' @param plots  named list of ggplot/patchwork objects (NULL entries skipped). A plot that
+#'   cannot be drawn keeps its .rds and gives a warning naming the .png.
 #' @return invisibly the module output directory.
 #' @export
 saveResult <- function(outputDir, moduleName, tables = list(),
@@ -29,10 +30,11 @@ saveResult <- function(outputDir, moduleName, tables = list(),
     p <- plots[[nm]]
     if (is.null(p)) next
     saveRDS(p, file.path(base, "plots", paste0(nm, ".rds")))
+    png <- file.path(base, "plots", paste0(nm, ".png"))
     tryCatch(
-      ggplot2::ggsave(file.path(base, "plots", paste0(nm, ".png")),
-                      plot = p, width = 8, height = 8, dpi = 100),
-      error = function(e) NULL)
+      ggplot2::ggsave(png, plot = p, width = 8, height = 8, dpi = 100),
+      error = function(e) warning("saveResult: could not write ", png, ": ",
+                                  conditionMessage(e), call. = FALSE))
   }
   invisible(base)
 }
