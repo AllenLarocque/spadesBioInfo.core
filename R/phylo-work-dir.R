@@ -4,27 +4,16 @@
 #' `<cacheRoot>/pd.wd/<subsetName>-<hash>`, where `<hash>` is the first 8 hex characters of the
 #' md5 of the sorted, de-duplicated taxa set.
 #'
-#' ⚠️ Why the hash, and not just the subset name. Both assembly modules used to build this dir as
-#' `file.path(cachePath(sim), "pd.wd", subsetName)`. `cache/pd.wd/whole/pd.desc` was written on
-#' 2026-07-12, when `ps_raw` held 25,070 ASVs; Increment 4's read-level adapter removal replaced
-#' them with 16,778 DIFFERENT ASVs (md5-of-sequence ids, so a changed sequence is a changed id).
-#' The label `"whole"` did not change, so `iCAMP::icamp.big` found the seventeen-day-old matrix and
-#' announced that it was "directly used", and `NST::pNST` then died 24 h into a production run with
-#' `pd.spname has some OTUs not in community matrix` (3,148 mismatched names).
+#' Why the hash, not just the subset name: the scratch directory is governed by no cache key, and
+#' a label such as `"whole"` cannot record which ASVs it stood for. Named by subset alone, a
+#' changed ASV set found the old matrix, which iCAMP reused and NST later rejected after a day of
+#' compute. Named by the taxa fingerprint, the same taxa reach the same directory (the hours of
+#' distance computation are reused) and a different set reaches a different one. This is D14's
+#' rule -- a path is scoped by content wherever the content can change under a fixed label.
 #'
-#' `reproducible::Cache` was never the problem — it hashes `psFilt` and correctly missed. The stale
-#' artifact was the module's OWN on-disk scratch, which no cache key governs. A label cannot record
-#' which ASVs it stood for, so the fingerprint of the taxa set names the directory instead: the
-#' same taxa reach the same dir (the hours of distance computation are still reused), and a
-#' different taxa set reaches a different dir, where the stale matrix is unreachable rather than
-#' silently wrong. This is D14's rule — *a path is scoped by content identity wherever the content
-#' can change under a fixed label* — applied to derived scratch instead of to references.
-#'
-#' ⚠️ The TREE is part of the identity too (0.1.39). A dir named from the taxa alone was shared by
-#' every tree over those taxa: a changed topology or branch length re-keyed the sweep's cache entry
-#' but reached the same directory, so the new sweep overwrote the old matrix and a later hit on the
-#' old entry read the new tree's distances. The key is now the taxa set plus
-#' `paste0("tree=", phyloArtifactId(tree))` -- the canonical tree fingerprint plus the tip ORDER
+#' The tree is part of the identity too: taxa alone would let two trees over the same taxa share
+#' a directory and read each other's distances. The key is the taxa set plus
+#' `paste0("tree=", phyloArtifactId(tree))` -- the canonical tree fingerprint plus the tip order
 #' the distance rows are written in (see [phyloArtifactId()]).
 #'
 #' @param cacheRoot cache root, normally `cachePath(sim)`.
@@ -107,7 +96,7 @@ phyloArtifactId <- function(tree) {
 
 #' An exact, R-version-independent, canonical fingerprint of a phylogenetic tree.
 #'
-#' A Merkle hash over the tree, independent of how the tree is stored (0.1.39):
+#' A Merkle hash over the tree, independent of how the tree is stored:
 #' - a tip encodes as `<nchar(label, "bytes")>#<label>` (length-prefixed, so no label can mimic
 #'   the grammar);
 #' - each child of a node contributes `<child encoding>:<edge length>`, the length written with

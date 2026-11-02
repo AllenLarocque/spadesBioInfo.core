@@ -6,38 +6,24 @@
 #' against one contract.
 #'
 #' @section `ranks` is REQUIRED and has no default:
-#' This function used to assert the Kingdom-rooted seven
-#' (`c("Kingdom", "Phylum", ..., "Species")`) as a literal. That is a reference fact wearing
-#' the costume of a universal one: UNITE is Kingdom-rooted and SILVA is **Domain**-rooted, so
-#' a correctly-classified SILVA `ps_raw` was rejected with "missing one or more of the 7
-#' standard ranks" -- in `assembleAmplicon`, i.e. AFTER an hour of `LearnTaxa()` and four hours
-#' of `IdTaxa()`. There is no reference-neutral fallback to default to, so a caller that omits
-#' `ranks` gets a named error rather than a silently wrong vocabulary (same rule, and the same
-#' reason, as `flattenIdTaxaDescent()` and `trainReferenceClassifier()`).
+#' Rank names are a reference fact: UNITE is Kingdom-rooted and SILVA Domain-rooted, so a
+#' built-in ladder would reject a correct `ps_raw` from the other reference, after hours of
+#' classification. There is no reference-neutral default, so omitting `ranks` is a named error
+#' (as in `flattenIdTaxaDescent()` and `trainReferenceClassifier()`).
 #'
 #' @section ...and it must be INDEPENDENT of `ps`:
-#' ⛔ **Never pass `phyloseq::rank_names(ps)`.** That asks "does `ps` have the ranks `ps` has",
-#' which is a guard that cannot fail -- the single most-repeated defect in this project. Each
-#' producer has a genuine independent source:
+#' Never pass `phyloseq::rank_names(ps)`: that asks "does `ps` have the ranks `ps` has", a guard
+#' that cannot fail. Each producer has an independent source:
 #'   - `assembleAmplicon` passes `sim$referenceRanks` -- what `prepReferenceDb` read off the
 #'     REFERENCE -- checked against what `classifyAmplicon` actually produced. That catches a
 #'     classifier emitting the wrong schema.
 #'   - `readAmplicon` passes `names(rankPrefixes())` -- the vocabulary its own taxonomy parser
 #'     declares, which is Kingdom-rooted by construction.
 #'
-#' ⚠️ **[recordExcluded()] in this same package now follows the SAME rule** -- it too takes
-#' `ranks` as a required argument from the caller. This note used to claim the opposite ("it
-#' REPORTS the taxonomy that is present, so the object is the only correct source... do not
-#' harmonise them"), and that argument was wrong. Reporting still needs an independent
-#' vocabulary, because a `tax_table` column cannot be classified as a rank by inspecting its
-#' name: until refactor 1B, `enrichFunGuild` / `enrichFungalTraits` / `enrichFunFun` `cbind`-ed
-#' ~12 `FG.*` columns onto the same `tax_table` before any filter ran, so "the taxonomy that is
-#' present" and "the columns that are present" were different sets and only the reference knew
-#' which was which. Since 1B they publish `...ByTaxon` tables instead (`funGuildByTaxon`, ...),
-#' but a consumer may still join annotation columns onto its own copy ([joinTaxonTables()]), so
-#' the rule stands. See `recordExcluded()`'s own docs for the two generations of name-based rule that
-#' failed. The two functions differ only in what they DO with `ranks` (check vs. record), never
-#' in where it comes from.
+#' [recordExcluded()] follows the same rule: a `tax_table` column cannot be classified as a rank
+#' by its name (a consumer may have joined annotation columns with [joinTaxonTables()]), so it
+#' too takes `ranks` from the caller. The two differ only in what they do with `ranks` (check vs.
+#' record), never in where it comes from.
 #'
 #' @param ps a phyloseq object.
 #' @param ranks character vector of rank names the `tax_table` must carry, from a source

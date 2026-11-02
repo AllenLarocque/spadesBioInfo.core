@@ -5,49 +5,22 @@
 #' count > 0), and exactly the taxonomy columns named in `ranks`. Not exported.
 #'
 #' @section `ranks` is REQUIRED and has no default:
-#' ⛔ **A `tax_table` column cannot be classified as a rank by inspecting its name.** Two
-#' generations of this function tried and both were wrong:
+#' A `tax_table` column cannot be classified as a rank by its name. A rank whitelist drops ranks
+#' it does not list (SILVA's Domain), and a blocklist admits every non-rank column a caller has
+#' joined (e.g. FG.* annotations). So `ranks` comes from the caller, whose reference vocabulary
+#' (`sim$referenceRanks`, from `prepReferenceDb`'s `referenceParserRegistry()`) knows which
+#' columns are ranks. There is no reference-neutral vocabulary, so omitting it is a named error,
+#' as in [validatePsRaw()], [compareTaxonomies()] and `trainReferenceClassifier()`.
 #'
-#'   - `intersect(c("Kingdom", ..., "Genus"), colnames(tax))` -- a WHITELIST -- silently dropped
-#'     **Domain** from a SILVA-classified 16S audit, and the 16S whitelist filter IS on Domain
-#'     (`filterByTaxon(rank = "Domain", keep = c("Bacteria", "Archaea"))`), so the trail recorded
-#'     WHAT was dropped without recording WHICH DOMAIN it was.
-#'   - `setdiff(colnames(tax), c("Species", "confidence"))` -- a BLOCKLIST -- was introduced to
-#'     fix that and was documented as reproducing ITS's `Kingdom..Genus` byte-for-byte. **It does
-#'     not.** Before refactor 1B, `.pipelineOrder` ran `enrichFunGuild` / `enrichFungalTraits` /
-#'     `enrichFunFun` BEFORE `filterFeatures`, and each `cbind`-ed its own columns (`FG.Taxon`,
-#'     `FG.Guild`, `FG.TrophicMode`, the `FG.is.TM*` indicators) onto the `tax_table`, so by the
-#'     time a filter ran an ITS `tax_table` carried ~12 enrichment columns and a two-name
-#'     blocklist admitted every one of them into the audit. Since 1B the enrich modules publish
-#'     `...ByTaxon` tables and leave `ps_raw` untouched, but any caller's `tax_table` can still
-#'     carry joined non-rank columns, so the caller's vocabulary remains the only safe source.
-#'
-#' A whitelist excludes the unknown by construction; a blocklist must enumerate it, and the set
-#' of things to enumerate grows every time anyone adds a `tax_table` column. So `ranks` now comes
-#' from the CALLER, whose reference vocabulary (`sim$referenceRanks`, from `prepReferenceDb`'s
-#' `referenceParserRegistry()`) is the only source that actually knows which columns are ranks.
-#' There is no reference-neutral vocabulary to fall back to, so omitting it is a named error
-#' rather than a silently wrong schema -- the same rule, for the same reason, as
-#' [validatePsRaw()], [compareTaxonomies()] and `trainReferenceClassifier()`.
-#'
-#' ⚠️ **`ranks` is recorded VERBATIM: these columns, in this order, no more and no less.** In
-#' particular this function does NOT trim the terminal rank. Today's audit reports the ladder
-#' minus its leaf (ITS `Kingdom..Genus`, SILVA `Domain..Genus`), but that trim belongs to the
-#' CALLER -- see [filterByTaxon()]'s callers -- because it is a policy about what the audit
-#' TABLE should show, not a property of how the audit is built. A `head(ranks, -1L)` hidden in
-#' here would be invisible at the call site, would make an already-trimmed argument silently
-#' lose a second rank, and would leave a caller that genuinely wants the full ladder unable to
-#' ask for it. Hidden transforms of a rank vocabulary are the same defect class this argument
-#' exists to close.
+#' `ranks` is recorded verbatim: these columns, in this order. This function does not trim the
+#' terminal rank; callers that want the ladder minus its leaf (`Kingdom..Genus`) pass that. A
+#' hidden trim would be invisible at the call site and would let an already-trimmed argument
+#' lose a second rank.
 #'
 #' @section `NULL` means "I do not want the audit":
-#' `ranks = NULL` is a legal, EXPLICIT value: it returns `NULL` instead of an audit frame, for
-#' the one caller (`calcPhyloDiversity`) that prevalence-filters purely to obtain `$ps` and
-#' writes no `excludedFeatures` artifact at all. It means **no audit** -- never "audit
-#' everything" and never "guess the ranks". That distinction is the whole point: guessing is
-#' what produced both defects above, and a caller that passes `NULL` and then reads `$excluded`
-#' gets a loud `NULL` rather than a plausible-looking wrong table. Omitting `ranks` altogether
-#' is still an error -- "I thought about the audit and do not need it" must be written down.
+#' `ranks = NULL` is an explicit opt-out: it returns `NULL` instead of an audit frame, for a
+#' caller (`calcPhyloDiversity`) that prevalence-filters only to obtain `$ps`. It never means
+#' "audit everything" or "guess the ranks". Omitting `ranks` altogether is still an error.
 #'
 #' @param ps the phyloseq BEFORE pruning (so reads/prevalence reflect the taxon).
 #' @param keepLogical logical over taxa (in `phyloseq::taxa_names(ps)` order).
@@ -72,10 +45,9 @@ recordExcluded <- function(ps, keepLogical, filter, ranks) {
   otu <- as(phyloseq::otu_table(ps), "matrix")
   if (!phyloseq::taxa_are_rows(ps)) otu <- t(otu)     # taxa as rows
   tax <- as.data.frame(unclass(phyloseq::tax_table(ps)), stringsAsFactors = FALSE)
-  # Checked BEFORE the nothing-dropped early return, so the empty frame and a populated one
-  # agree on both their column names and their failure mode. (`tax[, ranks]` would error here
-  # anyway, but only on the populated path -- an audit that passes until something is actually
-  # excluded is exactly the silent-drop this family exists to prevent.)
+  # Checked before the nothing-dropped early return, so the empty frame and a populated one
+  # agree on column names and failure mode; otherwise a bad `ranks` would pass until something
+  # was actually excluded.
   absent <- setdiff(ranks, colnames(tax))
   if (length(absent))
     stop("recordExcluded: tax_table has no column(s) ", paste(absent, collapse = ", "),
@@ -104,7 +76,7 @@ recordExcluded <- function(ps, keepLogical, filter, ranks) {
 #' @param keep the values at `rank` to retain.
 #' @param ranks the `tax_table` columns the excluded-features audit records, root-first, from
 #'   the caller's reference vocabulary; or `NULL` to skip the audit. Required -- no default.
-#'   ⚠️ Passed to [recordExcluded()] VERBATIM (it does not trim the terminal rank; the caller
+#'   Passed to [recordExcluded()] verbatim (it does not trim the terminal rank; the caller
 #'   does) -- see that function for why the audit's rank vocabulary cannot come from `ps`.
 #' @return list(ps = filtered phyloseq, excluded = audit data.frame, or `NULL` when `ranks` is
 #'   `NULL`). `ps` is `NULL` when the whitelist keeps ZERO taxa (phyloseq cannot hold a 0-taxa
@@ -137,37 +109,31 @@ filterByTaxon <- function(ps, rank, keep, ranks) {
 #'
 #' -- so `filterByTaxon(rank = "Domain", keep = c("Bacteria", "Archaea"))` keeps every one of
 #' them, with a confident bacterial lineage and a real plant or fungal name at Species. Nothing
-#' about the resulting table looks wrong. Measured on this project's full-length SILVA probe
-#' (43,547 ASVs / 48 samples): **58 taxa, 1,182 reads, all 58 `d__Bacteria`.**
+#' about the resulting table looks wrong.
 #'
 #' @section Rank-agnostic by design:
 #' A taxon matches when **any** column named in `searchRanks` equals a value in `drop`
 #' (case-insensitive, whole-value). The rule is deliberately not tied to the rank a label
 #' canonically sits at, because the rank at which a label *appears* depends on how deep the
 #' classifier resolved that ASV. `Mitochondria` is a Family whose Order (`Rickettsiales`) is a
-#' real bacterial order; `Chloroplast` occupies Order, Family and Genus at once. A rule keyed to
-#' one rank per label works on the reference it was written against and silently misses taxa the
-#' moment either changes -- and dropping the *parent* (`o__Rickettsiales`, `c__Cyanobacteriia`)
-#' instead would remove real bacteria while still passing a naive count check.
+#' real bacterial order; `Chloroplast` occupies Order, Family and Genus at once. A rule keyed to one
+#' rank per label silently misses taxa when the reference or the resolution depth changes, and
+#' dropping the parent (`o__Rickettsiales`) would remove real bacteria.
 #'
 #' @section Why `searchRanks` and `ranks` are separate arguments:
 #' They answer different questions and take different values. `ranks` is the audit vocabulary --
 #' what the excluded-features TABLE shows, which callers trim to the reference's ladder minus its
 #' leaf (`Domain..Genus`). `searchRanks` is where to LOOK, which is the full ladder including
-#' `Species`. Collapsing them into one argument would work by accident on today's data -- no
-#' organelle label sits at `Species` -- and be wrong the first time one did, which is exactly the
-#' "verifies something adjacent to what it claims" defect this codebase keeps paying for. Both
-#' are required with no default, for the reason given in [recordExcluded()]: a `tax_table` column
-#' cannot be classified as a rank by inspecting its name.
+#' `Species`. One argument would work only while no organelle label sits at `Species`. Both are
+#' required with no default, for the reason given in [recordExcluded()].
 #'
 #' @section `unmatched` defaults to erroring, and that is the point:
 #' A blocklist that matches nothing is indistinguishable from a blocklist that was never applied.
 #' `drop = "Mitochondrion"` (or `"chloroplasts"`, or a value from a reference whose labels
 #' differ) removes nothing, writes a clean-looking audit and reports success. So each value in
 #' `drop` must match at least one taxon, **checked per value** -- one good value does not excuse a
-#' typo'd neighbour. The check lives here rather than in the calling module so there is exactly
-#' ONE implementation of the matching rule: a second copy in a caller could drift from the rule
-#' actually applied, reintroducing the same defect in a new place. Pass `"warn"` or `"ignore"`
+#' typo'd neighbour. The check lives here so there is one implementation of the matching rule;
+#' a copy in a caller could drift from the rule actually applied. Pass `"warn"` or `"ignore"`
 #' for a caller that genuinely means "drop these if present".
 #'
 #' @param ps a phyloseq object.
@@ -176,7 +142,7 @@ filterByTaxon <- function(ps, rank, keep, ranks) {
 #' @param searchRanks the `tax_table` columns to search, from the caller's reference vocabulary
 #'   (`sim$referenceRanks`). Required -- no default, and NOT defaulted to `ranks`.
 #' @param ranks the `tax_table` columns the audit records, root-first; or `NULL` to skip the
-#'   audit. Required -- no default. ⚠️ Forwarded to [recordExcluded()] VERBATIM.
+#'   audit. Required -- no default. Forwarded to [recordExcluded()] verbatim.
 #' @param filter the filter-step label written into the audit's `filter` column.
 #' @param unmatched what to do when a `drop` value matches no taxon: `"error"` (default),
 #'   `"warn"`, or `"ignore"`.
@@ -252,7 +218,7 @@ dropByTaxon <- function(ps, drop, searchRanks, ranks, filter = "droptaxa",
 #' @param ranks the `tax_table` columns the excluded-features audit records, root-first, from
 #'   the caller's reference vocabulary; or `NULL` for the callers that want only `$ps` and
 #'   write no `excludedFeatures` artifact (`calcPhyloDiversity`). Required -- no default.
-#'   ⚠️ Passed to [recordExcluded()] VERBATIM -- see that function.
+#'   Passed to [recordExcluded()] verbatim -- see that function.
 #' @return list(ps = filtered phyloseq, excluded = audit data.frame, or `NULL` when `ranks` is
 #'   `NULL`). `ps` is `NULL` when the filter keeps ZERO taxa (phyloseq cannot hold a 0-taxa
 #'   object) — callers must guard `is.null(res$ps)` before `phyloseq::ntaxa()`.
