@@ -101,7 +101,7 @@ test_that("the descriptor dirname is rewritten to the new wd", {
 })
 
 # ---------------------------------------------------------------------------
-# Fix round 2 (core 0.1.38): the key is tree + nworker + basename(wd), so a SECOND root
+# Fix round 2 (core 0.1.38): the key is tree + basename(wd), so a SECOND root
 # with the same tree and the same cache can HIT an entry whose wd in that root holds no
 # backing files. That must recompute (and re-save), not hand back a dangling result.
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ test_that("repointBigDescriptors is exported and rewrites a stale dirname", {
   set.seed(23); tr <- ape::rtree(6)
   wdA <- tempfile("rpA-"); wdB <- tempfile("rpB-")
   on.exit(unlink(c(wdA, wdB), recursive = TRUE), add = TRUE)
-  suppressMessages(iCAMP::pdist.big(tree = tr, wd = wdA, nworker = 1))
+  suppressMessages(withWorkerCluster(1, NULL, function(cl) iCAMP::pdist.big(tree = tr, wd = wdA, nworker = 1, cl = cl)))
   dir.create(wdB); file.copy(list.files(wdA, full.names = TRUE), wdB)
   unlink(wdA, recursive = TRUE)
   ns <- readLines(file.path(test_path("..", ".."), "NAMESPACE"))
@@ -211,8 +211,8 @@ test_that("an interrupted rebuild leaves no marker, and the next call rebuilds",
   a1 <- readPhyloDist(suppressMessages(subsetPhyloDist(tt$a, wd, nworker = 1, cachePath = cache)))
   expect_true(file.exists(file.path(wd, "phylo-tree.md5")))
   # B's build writes all three backing files (as B's real distance), then dies.
-  crash <- function(tree, wd, nworker) {
-    iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker)
+  crash <- function(tree, wd, nworker, cl) {
+    iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker, cl = cl)
     stop("interrupted")
   }
   expect_error(suppressMessages(subsetPhyloDist(tt$b, wd, nworker = 1, cachePath = cache,
@@ -286,9 +286,9 @@ test_that("the wd lock is held while the distance is built (injected pdistFn)", 
   a <- ape::read.tree(text = "((a:1,b:2):3,c:4);")
   wd <- tempfile("pd-lock-"); on.exit(unlink(wd, recursive = TRUE), add = TRUE)
   seen <- NA
-  probe <- function(tree, wd, nworker) {
+  probe <- function(tree, wd, nworker, cl) {
     seen <<- lockHeldElsewhere(file.path(wd, ".lock"))
-    iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker)
+    iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker, cl = cl)
   }
   suppressMessages(subsetPhyloDist(a, wd, nworker = 1, cachePath = file.path(wd, "c"),
                                    pdistFn = probe))
@@ -322,13 +322,13 @@ test_that("two processes rebuilding one wd cannot certify a partial build", {
     fl <- function(n) file.path(base, n)
     hold <- function(n) { t0 <- Sys.time()
       while (!file.exists(fl(n)) && difftime(Sys.time(), t0, units = "secs") < 120) Sys.sleep(0.05) }
-    pdistFn <- if (role == "slow") function(tree, wd, nworker) {
-      out <- iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker)
+    pdistFn <- if (role == "slow") function(tree, wd, nworker, cl) {
+      out <- iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker, cl = cl)
       file.create(fl("p1-built")); hold("release")
       out
-    } else function(tree, wd, nworker) {
+    } else function(tree, wd, nworker, cl) {
       file.create(fl("p2-inside"))
-      iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker)
+      iCAMP::pdist.big(tree = tree, wd = wd, nworker = nworker, cl = cl)
       stop("interrupted")
     }
     if (role == "crash") file.create(fl("p2-waiting"))
@@ -423,6 +423,45 @@ test_that("readPhyloDist refuses files with no marker, or a marker for other lab
   expect_equal(readPhyloDist(r)[["a", "b"]], 3)
   # a raw pdist.big dir (complete files, but nobody vouched for them) is refused too
   raw <- tempfile("pd-raw-"); on.exit(unlink(raw, recursive = TRUE), add = TRUE)
-  pr <- suppressMessages(iCAMP::pdist.big(tree = a, wd = raw, nworker = 1))
+  pr <- suppressMessages(withWorkerCluster(1, NULL, function(cl) iCAMP::pdist.big(tree = a, wd = raw, nworker = 1, cl = cl)))
   expect_error(readPhyloDist(pr), "no completed-build marker")
+})
+
+test_that("changing nworker hits the cache", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(31); tr <- ape::rtree(12); tr$tip.label <- paste0("t", 1:12)
+  other <- ape::rtree(12); other$tip.label <- tr$tip.label
+  base <- tempfile("pd-nworker-"); dir.create(base); on.exit(unlink(base, recursive = TRUE), add = TRUE)
+  cache <- file.path(base, "cache"); wd <- file.path(base, "wd", "pd-n")
+  r1 <- suppressMessages(subsetPhyloDist(tr, wd, nworker = 1, cachePath = cache))
+  expect_true(attr(r1, ".Cache")$newCache)
+  r2 <- suppressMessages(subsetPhyloDist(tr, wd, nworker = 2, cachePath = cache))
+  expect_false(attr(r2, ".Cache")$newCache)
+  nEntries <- function() length(unique(suppressMessages(reproducible::showCache(cache))$cacheId))
+  expect_identical(nEntries(), 1L)                  # nworker 1 and 2 share one entry
+  # non-vacuous: a different tree is a new key. (It also forces "overwrite", so newCache alone
+  # proves nothing; an overwrite under the same key would leave ONE entry.)
+  r3 <- suppressMessages(subsetPhyloDist(other, file.path(base, "wd", "pd-n"), nworker = 2, cachePath = cache))
+  expect_true(attr(r3, ".Cache")$newCache)
+  expect_identical(nEntries(), 2L)
+})
+
+test_that("pdist.big never creates its own cluster", {
+  skip_if_not_installed("iCAMP"); skip_if_not_installed("bigmemory")
+  set.seed(32); tr <- ape::rtree(12); tr$tip.label <- paste0("t", 1:12)
+  testthat::local_mocked_bindings(makeCluster = function(...) stop("package-made cluster"),
+                                  .package = "parallel")
+  build <- function(nworker) {
+    base <- tempfile("pd-nocl-"); dir.create(base)
+    withr::defer(unlink(base, recursive = TRUE), envir = parent.frame(2))
+    r <- suppressMessages(subsetPhyloDist(tr, file.path(base, "wd"), nworker = nworker,
+                                          cachePath = file.path(base, "cache")))
+    list(new = attr(r, ".Cache")$newCache, md5 = unname(tools::md5sum(file.path(base, "wd", "pd.bin"))))
+  }
+  b1 <- build(1); b2 <- build(2)
+  expect_true(b1$new); expect_true(b2$new)
+  expect_identical(b1$md5, b2$md5)
+  # Control: without `cl`, pdist.big's last fallback is not wrapped in try(), so the mock bites.
+  expect_error(suppressMessages(iCAMP::pdist.big(tr, wd = tempfile("pd-ctl-"), nworker = 2)),
+               "package-made cluster")
 })

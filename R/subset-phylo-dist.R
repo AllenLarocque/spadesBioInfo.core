@@ -1,13 +1,14 @@
 #' Build (and Cache) the pairwise phylogenetic distance for a tree, in iCAMP's
-#' disk/bigmemory-backed form so the same artifact can serve iCAMP/NST (Increment 2)
-#' and the phylo-diversity metrics. Keyed on the tree, `nworker` and `basename(wd)` -- NOT
+#' disk/bigmemory-backed form so the same artifact can serve iCAMP/NST
+#' and the phylo-diversity metrics. Keyed on the tree and `basename(wd)` -- NOT
 #' the absolute `wd` -- so a second consumer cache-hits, and so does the same build after
 #' the project (cache + work dirs) is moved. On return, `pd.wd` and the bigmemory
 #' descriptor(s) in `wd` are rebased onto the current `wd`.
 #' @param tree a rooted `phylo` with at least 2 tips.
 #' @param wd the content-keyed work directory (see [phyloWorkDir()]); must live where the
 #'   cache can travel with it (under `cachePath`).
-#' @param nworker passed to `iCAMP::pdist.big()`; part of the cache key.
+#' @param nworker the number of workers in the cluster the build runs on (see [withWorkerCluster()]);
+#'   a resource knob, not part of the cache key.
 #' @param cachePath the cache repository, passed to `reproducible::Cache()` explicitly so a
 #'   caller's own root (normally `cachePath(sim)`) is used, never an ambient default.
 #' @param pdistFn the distance builder, `iCAMP::pdist.big`; injectable so a test can interrupt a
@@ -16,7 +17,7 @@
 #'   `pd.taxon.name.csv`), a cache HIT would hand back a result pointing at nothing -- e.g. a
 #'   second root sharing the cache, or a work dir deleted without its entry. The call is
 #'   then made with `useCache = "overwrite"`: recompute into `wd` and re-save. The same
-#'   happens (0.1.39) when `wd`'s `phylo-tree.md5` is absent or names a different artifact
+#'   happens when `wd`'s `phylo-tree.md5` is absent or names a different artifact
 #'   ([phyloArtifactId()]: the canonical tree fingerprint plus the tip order the rows were
 #'   written in), so a hit never reads another tree's -- or another row order's -- matrix. The
 #'   marker is removed before any artifact is touched and written only after the build
@@ -33,21 +34,18 @@ subsetPhyloDist <- function(tree, wd, nworker = 1,
   # cleared here -- inside the Cached closure, so this runs ONLY on a miss; on a hit
   # the closure never fires and the valid cached distance is reused untouched.
   #
-  # The original reason was phyloDistWd()'s label collisions (two different ASV sets
-  # both named "whole" at the same thresholds). Content-keyed `wd` makes that
-  # impossible, but the clearing STAYS, for a reason that outlives it: the working
-  # directory is not governed by any cache key, so it can survive a cache entry.
-  # After clearCache() the content is unchanged, so the same wd is reached -- still
-  # populated -- while the cache misses. Without this, "clear the cache and
-  # recompute" would hard-error instead of recomputing.
+  # The work directory is not governed by any cache key, so it can outlive its entry: after
+  # clearCache() the same content-keyed wd is reached, still populated, while the cache misses.
+  # Without this, "clear the cache and recompute" would error instead of recomputing.
   buildPdistBig <- function(tree, wd, nworker) {
     # The success marker goes FIRST, before any artifact is touched: if the build below is
     # interrupted, the partial files must not sit beside a marker that vouches for them.
     unlink(file.path(wd, .pdistTreeFile))
     stale <- list.files(wd, pattern = "^(pd\\.|path\\.rda$)", full.names = TRUE)
     if (length(stale)) unlink(stale)
-    out <- pdistFn(tree = tree, wd = wd, nworker = nworker)
-    # Record WHICH tree these files are (0.1.39) -- only once pdist.big has COMPLETED -- so a
+    out <- withWorkerCluster(nworker, NULL, function(cl)
+      pdistFn(tree = tree, wd = wd, nworker = nworker, cl = cl))
+    # Record WHICH tree these files are -- only once pdist.big has COMPLETED -- so a
     # later hit can tell its own finished files from another tree's, or from a partial build.
     # line 1: the artifact id (tree + tip order); line 2: the tip-order key alone, which
     # readPhyloDist() can check from a result's tip.label without the tree.
@@ -56,24 +54,21 @@ subsetPhyloDist <- function(tree, wd, nworker = 1,
     out
   }
   #
-  # CACHE KEY (refactor 1A, portability): the tree and `nworker` are hashed; the absolute
-  # `wd` is NOT (omitArgs), because hashing it made every entry die with its root -- a
-  # moved or restored project missed on every distance build. Only `basename(wd)` is
-  # keyed: phyloWorkDir()/contentWorkDir() names the directory from its content, so the
-  # basename already says WHICH distance this is, independent of where it lives.
+  # CACHE KEY: the tree is hashed; `nworker` (a resource knob) and the absolute `wd` are not
+  # (omitArgs), so a moved or restored project, or another nworker, still hits. Only `basename(wd)` is keyed:
+  # phyloWorkDir()/contentWorkDir() name the directory from its content, so the basename says
+  # which distance this is, independent of where it lives.
   #
   # The key does not see the FILES, so a hit is only trusted when `wd` holds them. Without
   # them (another root sharing this cache; wd deleted but its entry kept) the hit would be a
   # dangling pointer and readPhyloDist() would stop -- so recompute and re-save instead.
   # useCache = FALSE (caching off) is respected either way.
   #
-  # Nor does the key see WHOSE files they are (0.1.39). Two trees over the same taxa reaching one
-  # wd (a dir named from taxa only -- phyloWorkDir() before 0.1.39) went A, B, A: B overwrote A's
-  # files and the third call hit A's entry and read B's matrix. A hit is now trusted only when
-  # the wd's recorded artifact id (phyloArtifactId(): tree + tip order) is THIS one's; otherwise
-  # recompute into wd.
+  # Nor does the key see whose files they are: two trees reaching one wd could leave one
+  # tree's entry pointing at the other's matrix. A hit is trusted only when the wd's recorded
+  # artifact id (phyloArtifactId(): tree + tip order) is this one's; otherwise recompute.
   #
-  # One process at a time per wd (fix round 3). Without a lock, two concurrent rebuilds could
+  # One process at a time per wd. Without a lock, two concurrent rebuilds could
   # certify partial files: A finishes its build, B unlinks the marker and starts rewriting, A
   # writes the marker, B crashes -- leaving B's partial files under A's marker. The exclusive
   # lock covers the WHOLE check-marker -> (maybe) build -> publish-marker -> rebase sequence.
@@ -85,7 +80,7 @@ subsetPhyloDist <- function(tree, wd, nworker = 1,
   if (!isFALSE(useCache) && !.pdistFilesAreFor(wd, tree))
     useCache <- "overwrite"
   res <- reproducible::Cache(buildPdistBig, tree = tree, wd = wd, nworker = nworker,
-                             omitArgs = "wd", .cacheExtra = list(wdKey = basename(wd)),
+                             omitArgs = c("wd", "nworker"), .cacheExtra = list(wdKey = basename(wd)),
                              cachePath = cachePath, useCache = useCache,
                              userTags = c("subsetPhyloDist", "pdist.big"))
   # A HIT returns the pd.wd recorded when the entry was SAVED, which after a move is the

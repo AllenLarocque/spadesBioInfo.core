@@ -1,9 +1,8 @@
-# Keyed tables: the non-mutating data flow of refactor plan 1B (core 0.1.40).
+# Keyed tables: the non-mutating (write-once) data flow.
 #
 # Producers publish their per-taxon / per-sample results as KEYED data.frames (`...ByTaxon`,
-# `...BySample`) instead of cbind-ing them onto the shared phyloseq (`ps_raw`, `coreMetadata`,
-# the per-subset alpha/phylo accumulator, now `ps_alphaBySubset` + `alphaBySample` /
-# `phyloBySample`). A consumer that needs some of those columns joins exactly the ones it
+# `...BySample`) instead of cbind-ing them onto a shared object (`ps_raw`, `coreMetadata`,
+# `ps_alphaBySubset`). A consumer that needs some of those columns joins exactly the ones it
 # needs, BY KEY, onto its own copy -- `joinTaxonTables()` / `joinSampleTables()`.
 #
 # Key names are fixed by the naming standard (spec 2026-10-13, Amendment A.1):
@@ -153,9 +152,8 @@ validateBySample <- function(x, name, keys = "sampleId") {
 #'   [taxonAnnotationFrame()], which returns a data.frame and never modifies `ps`.
 #' * Values are coerced with `as.character()` per column, because `tax_table` is a character
 #'   matrix. This differs from `as.matrix.data.frame()` (what `cbind`-ing a data.frame onto
-#'   the `tax_table` used to do), which `format()`s numeric columns to a common width (`" 2"`);
-#'   the padding is a declared difference, and no consumer reads padded numeric annotation
-#'   columns.
+#'   the `tax_table` does), which `format()`s numeric columns to a common width (`" 2"`); no
+#'   consumer reads padded numeric annotation columns.
 #' * The columns are appended in the order requested, by direct slot assignment followed by
 #'   `validObject()`; `otu_table`, `phy_tree`, `sam_data` and `refseq` are not touched (and
 #'   not copied).
@@ -472,7 +470,7 @@ joinSampleTables <- function(ps, tables, columns = NULL, subset = NULL) {
 #' `ps_filtered` (filterFeatures' output) is `ps_raw` filtered to the target taxa. It passes
 #' every [validatePsRaw()] check -- including the rank check, which is why `ranks` is required
 #' here too, from the same independent source (`sim$referenceRanks`) -- and additionally carries
-#' NO annotation columns: under the 1B data flow the enrichment modules publish `FG.*`
+#' NO annotation columns: the enrichment modules publish `FG.*`
 #' (FUNGuild), `FT.*` (FungalTraits) and `FF_*` (FunFun) as `...ByTaxon` tables instead of
 #' writing them onto the `tax_table`, so their presence here means an upstream write-back.
 #'

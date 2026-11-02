@@ -37,6 +37,7 @@ pruneSkippedResponses <- function(ds, phyloDiversitySummary) {
     base    <- if (isCore) sub("_core$", "", rsp) else rsp
     skipCol <- if (isCore) "metrics_skipped_core" else "metrics_skipped"
     engCol  <- if (isCore) "engine_core" else "engine"
+    # No audit column = no evidence of a skip, so keep it on purpose; preflight still checks it.
     if (!skipCol %in% names(phyloDiversitySummary)) return(TRUE)
 
     hits <- vapply(seq_len(nrow(phyloDiversitySummary)),

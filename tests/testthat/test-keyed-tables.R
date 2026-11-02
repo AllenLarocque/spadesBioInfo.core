@@ -290,12 +290,10 @@ test_that("validatePsAlphaBySubset refuses an alpha or phylo metric column on sa
 })
 
 test_that("alphaMetricColumns / phyloMetricColumns cover every column the Task 0 fixtures carry", {
-  # The fixtures are the PRE-1B module outputs (ps_metrics_bySubset). They live in the module
-  # tree, so this check only runs from the repository.
-  root <- normalizePath(file.path("..", "..", ".."), mustWork = FALSE)
-  af <- file.path(root, "modules/calcAlphaDiversity/tests/testthat/fixtures/calcAlphaDiversity-psMetrics-pre1B.rds")
-  pf <- file.path(root, "modules/calcPhyloDiversity/tests/testthat/fixtures/calcPhyloDiversity-psMetrics-pre1B.rds")
-  skip_if_not(file.exists(af) && file.exists(pf), "Task 0 fixtures not reachable")
+  # The fixtures are the PRE-1B module outputs (ps_metrics_bySubset), copies of
+  # calcAlphaDiversity's and calcPhyloDiversity's Task 0 fixtures.
+  af <- testthat::test_path("fixtures", "calcAlphaDiversity-psMetrics-pre1B.rds")
+  pf <- testthat::test_path("fixtures", "calcPhyloDiversity-psMetrics-pre1B.rds")
   a <- readRDS(af)
   for (nm in names(a$ps_metrics_bySubset)) {
     added <- setdiff(names(a$ps_metrics_bySubset[[nm]]@sam_data), names(a$ps_raw@sam_data))

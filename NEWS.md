@@ -1,3 +1,13 @@
+# spadesBioInfo.core 0.1.47
+
+* New `withWorkerCluster()`: runs code on a localhost PSOCK cluster the package owns, stopped on exit. Workers get the
+  parent's library on their command line, BLAS threads set to 1, and optional seeding done inside the workers
+  (the parent RNG is never touched).
+* New `resolveWorkers()`: `NA` is auto (1); a whole number >= 1 passes; anything else stops, naming the module.
+* New `dropResourceParams()`: removes `nworker` and `nthreads` from a parameter list.
+* `subsetPhyloDist()` builds through a caller-owned cluster; `nworker` is no longer in its cache key (a
+  one-time recompute).
+
 # spadesBioInfo.core 0.1.46
 
 * New `availableRamGb()` and `orElse()`, `manifestPathCols()`, `manifestRootName()`,
