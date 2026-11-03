@@ -1,3 +1,18 @@
+# spadesBioInfo.core 0.1.49
+
+* New `memoryBudget()`: the memory budget for a run, from the cgroup limit (or MemTotal) and what is available;
+  `mode` picks `fixed`, `available` or `min`.
+* New `memoryBudgetGb()`: `memoryBudget()`'s budget in GB.
+* New `startMemorySampler()`: a detached process that writes summed PSS memory samples for a run to a csv.
+* New `readMemorySamples()`: reads the csv that `startMemorySampler()` writes.
+* New `costTags()`: builds the cost tags for a cached step; tags are not part of the cache key.
+* New `collectStepCosts()`: one cost row per cached step invocation for a run.
+* New `collectModuleCosts()`: one cost row per module, from the module's events and its computed steps.
+* New `costHostInfo()`: CPU, cores, cgroup quota, memory limit and R version for the cost record.
+* New `appendStepCosts()`: appends rows to `step-costs.csv`, writing the header only when the file is new.
+* `availableRamGb()` is superseded by `memoryBudget()`.
+* `subsetPhyloDist()` tags its cache entry with `costTags()`; the key is unchanged.
+
 # spadesBioInfo.core 0.1.48
 
 * `dropResourceParams()` returns an unnamed list unchanged and keeps duplicate names.

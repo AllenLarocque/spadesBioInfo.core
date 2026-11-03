@@ -82,7 +82,9 @@ subsetPhyloDist <- function(tree, wd, nworker = 1,
   res <- reproducible::Cache(buildPdistBig, tree = tree, wd = wd, nworker = nworker,
                              omitArgs = c("wd", "nworker"), .cacheExtra = list(wdKey = basename(wd)),
                              cachePath = cachePath, useCache = useCache,
-                             userTags = c("subsetPhyloDist", "pdist.big"))
+                             userTags = c("subsetPhyloDist", "pdist.big",
+                                         costTags("core/buildPdistBig", taxa = ape::Ntip(tree),
+                                                  nworker = nworker)))
   # A HIT returns the pd.wd recorded when the entry was SAVED, which after a move is the
   # old root. pdist.big's result and its bigmemory descriptor both embed that absolute
   # path, so both are rebased onto the current `wd` right here, after the cached call.
