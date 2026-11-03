@@ -54,7 +54,7 @@ resolveWorkers <- function(nworker, module) {
   if (length(nworker) == 1L && (is.logical(nworker) || is.numeric(nworker)) && is.na(nworker))
     return(1L)
   ok <- is.numeric(nworker) && length(nworker) == 1L && is.finite(nworker) &&
-    nworker >= 1 && nworker == round(nworker)
+    nworker >= 1 && nworker <= .Machine$integer.max && nworker == round(nworker)
   if (!ok)
     stop(module, ": nworker must be NA (auto) or a whole number >= 1, got ",
          deparse(nworker), ".", call. = FALSE)
@@ -66,5 +66,6 @@ resolveWorkers <- function(nworker, module) {
 #' @return `params` without those elements, in order.
 #' @export
 dropResourceParams <- function(params) {
-  params[setdiff(names(params), .resourceParamNames)]
+  if (is.null(names(params))) return(params)
+  params[!names(params) %in% .resourceParamNames]
 }

@@ -15,7 +15,7 @@ test_that("resolveWorkers: NA is auto (1), whole numbers pass, the rest stop", {
   expect_identical(resolveWorkers(2, "m"), 2L)
   expect_identical(resolveWorkers(2L, "m"), 2L)
   for (na in list(NA, NA_real_, NA_integer_)) expect_identical(resolveWorkers(na, "m"), 1L)
-  for (bad in list(0, -1, 2.5, "8", c(1, 2), Inf))
+  for (bad in list(0, -1, 2.5, "8", c(1, 2), Inf, 1e10))
     expect_error(resolveWorkers(bad, "m"), "m: nworker must be NA")
   expect_error(resolveWorkers(2.5, "m"), "got 2.5\\.")
 })
@@ -24,6 +24,8 @@ test_that("dropResourceParams removes only resource knobs, keeping order", {
   expect_identical(dropResourceParams(list(a = 1, nworker = 4, b = 2, nthreads = 8)),
                    list(a = 1, b = 2))
   expect_identical(dropResourceParams(list(a = 1)), list(a = 1))
+  expect_identical(dropResourceParams(list(1, 2)), list(1, 2))
+  expect_identical(dropResourceParams(list(a = 1, a = 2, nworker = 3)), list(a = 1, a = 2))
 })
 
 test_that("workers load the parent's library from a folder with no .Rprofile", {
