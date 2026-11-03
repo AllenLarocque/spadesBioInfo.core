@@ -1,3 +1,8 @@
+# spadesBioInfo.core 0.1.48
+
+* `dropResourceParams()` returns an unnamed list unchanged and keeps duplicate names.
+* `resolveWorkers()` rejects values above `.Machine$integer.max` instead of returning `NA`.
+
 # spadesBioInfo.core 0.1.47
 
 * New `withWorkerCluster()`: runs code on a localhost PSOCK cluster the package owns, stopped on exit. Workers get the
