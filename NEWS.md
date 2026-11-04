@@ -1,3 +1,17 @@
+# spadesBioInfo.core 0.1.50
+
+* `collectStepCosts()` and `collectModuleCosts()`: the baseline is the lowest sample from just before
+  the window up to the peak, so the marginal is never negative when the previous step's memory is
+  freed during the window.
+* `collectModuleCosts()`: with an `eventType` column in `events`, a module's baseline starts at its
+  first event that is not `.inputObjects`.
+* `costTags()` runs `gc()` before the step while recording, so a step run in the R session shows its
+  own memory growth.
+* `memoryBudget()`: available memory is the least headroom over every limited cgroup on the path, so
+  a parent whose other members use its memory lowers it.
+* `collectStepCosts()` with no tagged invocations returns zero rows instead of an error, so
+  `collectModuleCosts()` still writes module rows.
+
 # spadesBioInfo.core 0.1.49
 
 * New `memoryBudget()`: the memory budget for a run, from the cgroup limit (or MemTotal) and what is available;

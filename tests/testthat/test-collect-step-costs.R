@@ -82,6 +82,20 @@ test_that("memory held before the window is not the step's", {
   expect_equal(c(st$baselineGiB, st$peakGiB, st$marginalGiB), c(6, 7, 1))
 })
 
+test_that("memory freed during the window lowers the baseline; the marginal is never negative", {
+  fx <- setupCost()
+  reproducible::Cache(slp, 0.5, userTags = costTags("t/m"), cachePath = fx$cp)
+  w <- attr(collect(fx), "windows")
+  # the previous step's 15 GiB is freed at the start of this one, which then grows to 12
+  writeSamples(fx, c(w$start - 1, w$start + 0.1, w$start + 0.3), c(15, 10, 12))
+  st <- collect(fx)
+  expect_equal(c(st$baselineGiB, st$peakGiB, st$marginalGiB), c(10, 12, 2))
+  # a low after the peak does not count
+  writeSamples(fx, c(w$start - 1, w$start + 0.1, w$start + 0.3), c(8, 9, 3))
+  st <- collect(fx)
+  expect_equal(c(st$baselineGiB, st$peakGiB, st$marginalGiB), c(8, 9, 1))
+})
+
 test_that("fewer than 2 samples is insufficient", {
   fx <- setupCost()
   reproducible::Cache(slp, 0.5, userTags = costTags("t/m"), cachePath = fx$cp)
@@ -129,6 +143,46 @@ test_that("module rows and column order", {
     "insufficient", .costDriverNames, "backend", "baselineGiB", "peakGiB", "marginalGiB", "pssFileGiB",
     "elapsedSec", "nestedSec", "stepShare", "amplicon", "cpuModel", "cores", "cpuQuota",
     "memLimitGiB", "rVersion", "runId", "date"))
+})
+
+test_that("a module's baseline starts after its .inputObjects", {
+  fx <- setupCost()
+  reproducible::Cache(slp, 0.2, userTags = costTags("modA/x"), cachePath = fx$cp)
+  st <- collect(fx)
+  t0 <- attr(st, "windows")$start - 30
+  ev <- data.frame(module = "modA", eventType = c(".inputObjects", "init"),
+                   start = c(t0, t0 + 20), end = c(t0 + 4, t0 + 24))
+  # 1 GiB at simInit; 6 GiB held by other modules before init; init grows to 9
+  writeSamples(fx, t0 + c(-1, 2, 19, 21, 23), c(1, 1.5, 6, 7, 9))
+  m <- collectModuleCosts(ev, fx$td, fx$runId, st, c(modA = "1"))
+  expect_equal(c(m$baselineGiB, m$peakGiB, m$marginalGiB), c(6, 9, 3))
+  # the peak during .inputObjects: the baseline comes from before it
+  writeSamples(fx, t0 + c(-1, 2, 19, 21, 23), c(1, 12, 6, 7, 9))
+  m <- collectModuleCosts(ev, fx$td, fx$runId, st, c(modA = "1"))
+  expect_equal(c(m$baselineGiB, m$peakGiB, m$marginalGiB), c(1, 12, 11))
+})
+
+test_that("costTags runs gc() only while recording", {
+  n <- 0L
+  local_mocked_bindings(gc = function(...) { n <<- n + 1L; invisible(NULL) }, .package = "base")
+  withr::with_options(list(spadesBioInfo.costDir = NULL), costTags("t/a"))
+  expect_equal(n, 0L)
+  fx <- setupCost()
+  costTags("t/a")
+  expect_equal(n, 1L)
+})
+
+test_that("a run with no tagged steps still gets module rows", {
+  fx <- setupCost()
+  st <- collect(fx)
+  expect_equal(nrow(st), 0L)
+  t0 <- Sys.time()
+  ev <- data.frame(module = "modA", start = t0, end = t0 + 4)
+  writeSamples(fx, t0 + c(-1, 1, 3), c(2, 3, 4))
+  m <- collectModuleCosts(ev, fx$td, fx$runId, st, c(modA = "1"), "ITS")
+  expect_equal(m$step, "modA")
+  expect_equal(c(m$baselineGiB, m$peakGiB), c(2, 4))
+  expect_equal(m$amplicon, "ITS")
 })
 
 test_that("collectModuleCosts refuses steps without matching windows", {

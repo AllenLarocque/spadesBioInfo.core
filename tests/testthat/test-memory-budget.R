@@ -46,6 +46,18 @@ test_that("the smallest limit up the path wins; fixed, available and min", {
   expect_equal(budget(cg, mi, mode = "available")$budgetGiB, 7)
 })
 
+test_that("a parent's usage limits what is available below a smaller leaf limit", {
+  d <- withr::local_tempdir()
+  cg <- fakeCgroup(d, "/a/b", list(
+    "a/b/memory.max" = 8 * GiB, "a/b/memory.current" = 1 * GiB,
+    "a/b/memory.stat" = c("anon 1", "inactive_file 0"),
+    "a/memory.max" = 16 * GiB, "a/memory.current" = 15 * GiB,
+    "a/memory.stat" = c("anon 1", "inactive_file 0")))
+  b <- budget(cg, fakeMeminfo(d), mode = "available")
+  expect_equal(b$limitGiB, 8)
+  expect_equal(b$availableGiB, 1)
+})
+
 test_that("a limit on the leaf beats a larger one on the ancestor", {
   d <- withr::local_tempdir()
   cg <- fakeCgroup(d, "/a/b", list(

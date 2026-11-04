@@ -84,8 +84,10 @@ memoryBudget <- function(mode = getOption("spadesBioInfo.memoryBudget", "min"),
          paste(format(share), collapse = ", "), call. = FALSE)
   }
 
-  # Limit: smallest memory.max from the leaf cgroup up to the root.
-  limit <- NA_real_; holder <- NA_character_
+  # Limit: smallest memory.max from the leaf cgroup up to the root. Available: the least headroom
+  # (limit - current + inactive_file) over every limited cgroup on the path, since a parent's other
+  # members can use up its limit before ours is reached.
+  limit <- NA_real_; headroom <- numeric()
   ln <- if (file.exists(procCgroup)) {
     grep("^0::", readLines(procCgroup, warn = FALSE), value = TRUE)
   } else character()
@@ -95,16 +97,17 @@ memoryBudget <- function(mode = getOption("spadesBioInfo.memoryBudget", "min"),
     for (k in seq(length(parts), 0L)) {
       dir <- do.call(file.path, as.list(c(cgroupRoot, parts[seq_len(k)])))
       v <- .readCgroupNum(file.path(dir, "memory.max"))
-      if (!is.na(v) && (is.na(limit) || v < limit)) { limit <- v; holder <- dir }
+      if (is.na(v)) next
+      if (is.na(limit) || v < limit) limit <- v
+      cur <- .readCgroupNum(file.path(dir, "memory.current"))
+      inactive <- .readCgroupNum(file.path(dir, "memory.stat"), "inactive_file")
+      headroom <- c(headroom, if (is.na(cur)) NA_real_ else max(0, v - cur + orElse(inactive, 0)))
     }
   }
 
   if (!is.na(limit)) {
     limitGiB <- limit / 2^30
-    cur <- .readCgroupNum(file.path(holder, "memory.current"))
-    inactive <- .readCgroupNum(file.path(holder, "memory.stat"), "inactive_file")
-    availableGiB <- if (is.na(cur)) NA_real_ else
-      min(limitGiB, max(0, limitGiB - cur / 2^30 + orElse(inactive, 0) / 2^30))
+    availableGiB <- if (anyNA(headroom)) NA_real_ else min(limitGiB, min(headroom) / 2^30)
     fixedGiB <- share * limitGiB
     src <- "container"
     what <- sprintf("%s of the %.1f GiB container limit", format(share), limitGiB)
