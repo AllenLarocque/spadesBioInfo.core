@@ -13,7 +13,8 @@
 #'
 #' Returns `userTags` that identify one invocation of a step and its size drivers. Each tag has
 #' exactly one colon. Tags are not part of the cache key. When `options(spadesBioInfo.costDir)` is
-#' set, one row is appended to `<costDir>/step-invocations-<runId>.csv`. Does not touch the RNG.
+#' set, one row is appended to `<costDir>/step-invocations-<runId>.csv` and `gc()` runs first, so the
+#' step's memory growth is measured from a collected heap. Does not touch the RNG.
 #' @param step step name, e.g. `"core/buildPdistBig"`.
 #' @param ... named drivers from the fixed vocabulary, each numeric length 1 (`NA` allowed).
 #' @param backend optional backend name.
@@ -36,14 +37,17 @@ costTags <- function(step, ..., backend = NA_character_) {
   if (grepl(":", step, fixed = TRUE)) stop("costTags: step must not contain ':' (got '", step, "').", call. = FALSE)
   if (!is.na(backend) && grepl(":", backend, fixed = TRUE))
     stop("costTags: backend must not contain ':' (got '", backend, "').", call. = FALSE)
+  costDir <- getOption("spadesBioInfo.costDir")
+  recording <- !is.null(costDir) && nzchar(costDir)
+  # hand freed memory back before the step, so a step run in this session shows its own growth
+  if (recording) invisible(gc(verbose = FALSE))
   .costState$n <- .costState$n + 1L
   now <- Sys.time()
   id <- paste0(Sys.getpid(), "-", format(now, "%Y%m%d%H%M%OS6"), "-", .costState$n)
   runId <- Sys.getenv("SPADES_RUN_ID", unset = "")
   if (!nzchar(runId)) runId <- "none"
   runId <- gsub(":", "_", runId, fixed = TRUE)
-  costDir <- getOption("spadesBioInfo.costDir")
-  if (!is.null(costDir) && nzchar(costDir)) {
+  if (recording) {
     f <- file.path(costDir, paste0("step-invocations-", runId, ".csv"))
     tryCatch({
       dir.create(costDir, recursive = TRUE, showWarnings = FALSE)
@@ -102,6 +106,16 @@ costHostInfo <- function() {
   unname(as.character(moduleVersions[[m]]))
 }
 
+# Baseline for a peak at `tPeak`: the lowest of the last sample at or before `s` and the `keep`
+# samples from `s` to the peak. Memory freed during the window lowers it, so the marginal is growth
+# above the lowest level reached before the peak and is never negative.
+.baselineGiB <- function(samples, keep, s, tPeak) {
+  before <- which(samples$time <= s)
+  cand <- keep$pssAnonGiB[keep$time >= s & keep$time <= tPeak]
+  if (length(before)) cand <- c(samples$pssAnonGiB[[max(before)]], cand)
+  if (length(cand)) min(cand) else NA_real_
+}
+
 # Memory columns for a window [s, e]; samples inside `excl` windows are ignored.
 .windowMemory <- function(samples, s, e, excl = NULL) {
   out <- list(baselineGiB = NA_real_, peakGiB = NA_real_, marginalGiB = NA_real_,
@@ -110,13 +124,12 @@ costHostInfo <- function() {
   inWin <- samples$time >= s & samples$time <= e
   for (k in seq_along(excl$start)) inWin <- inWin & !(samples$time >= excl$start[[k]] & samples$time <= excl$end[[k]])
   keep <- samples[inWin, , drop = FALSE]
-  before <- which(samples$time <= s)
-  base <- if (length(before)) samples$pssAnonGiB[[max(before)]] else if (nrow(keep)) keep$pssAnonGiB[[1]] else NA_real_
   out$insufficient <- nrow(keep) < 2L
   if (nrow(keep)) {
-    out$baselineGiB <- base
-    out$peakGiB <- max(keep$pssAnonGiB)
-    out$marginalGiB <- out$peakGiB - base
+    iPeak <- which.max(keep$pssAnonGiB)
+    out$peakGiB <- keep$pssAnonGiB[[iPeak]]
+    out$baselineGiB <- .baselineGiB(samples, keep, s, keep$time[[iPeak]])
+    out$marginalGiB <- out$peakGiB - out$baselineGiB
     out$pssFileGiB <- max(keep$pssFileGiB)
   }
   out
@@ -130,10 +143,11 @@ costHostInfo <- function() {
 
 .finishCostRows <- function(rows, amplicon, runId, date = format(Sys.Date())) {
   h <- costHostInfo()
-  rows$amplicon <- as.character(amplicon)
-  rows$cpuModel <- h$cpuModel; rows$cores <- h$cores; rows$cpuQuota <- h$cpuQuota
-  rows$memLimitGiB <- h$memLimitGiB; rows$rVersion <- h$rVersion
-  rows$runId <- runId; rows$date <- date
+  n <- nrow(rows)
+  rows$amplicon <- rep(as.character(amplicon), n)
+  rows$cpuModel <- rep(h$cpuModel, n); rows$cores <- rep(h$cores, n)
+  rows$cpuQuota <- rep(h$cpuQuota, n); rows$memLimitGiB <- rep(h$memLimitGiB, n)
+  rows$rVersion <- rep(h$rVersion, n); rows$runId <- rep(runId, n); rows$date <- rep(date, n)
   rows[, .stepCostColumns, drop = FALSE]
 }
 
@@ -217,7 +231,9 @@ collectStepCosts <- function(costDir, runId, cachePath, moduleVersions, amplicon
 
 #' One cost row per module
 #'
-#' @param events data.frame(module, start, end), POSIXct start and end of each module event.
+#' @param events data.frame(module, start, end[, eventType]), POSIXct start and end of each module
+#'   event. With `eventType`, a module's baseline is taken from its first event that is not
+#'   `.inputObjects` (which runs inside `simInit()`).
 #' @param costDir,runId,moduleVersions,amplicon as in [collectStepCosts()].
 #' @param steps result of [collectStepCosts()].
 #' @return data.frame in `step-costs.csv` column order, `level = "module"`, `step` = module name.
@@ -237,15 +253,25 @@ collectModuleCosts <- function(events, costDir, runId, steps, moduleVersions, am
     ev <- events[events$module == m, , drop = FALSE]
     ev <- ev[order(ev$start), , drop = FALSE]
     el <- sum(as.numeric(difftime(ev$end, ev$start, units = "secs")))
-    mem <- .windowMemory(samples, ev$start[[1]], max(ev$end))
-    # peak over the events' own windows, not the gaps between them
+    mem <- list(baselineGiB = NA_real_, peakGiB = NA_real_, marginalGiB = NA_real_,
+                pssFileGiB = NA_real_, insufficient = TRUE)
     if (!is.null(samples) && nrow(samples)) {
+      # samples inside the module's own events, not the gaps between them
       inEv <- Reduce(`|`, lapply(seq_len(nrow(ev)), function(k) samples$time >= ev$start[[k]] & samples$time <= ev$end[[k]]))
       keep <- samples[inEv, , drop = FALSE]
       mem$insufficient <- nrow(keep) < 2L
-      mem$peakGiB <- if (nrow(keep)) max(keep$pssAnonGiB) else NA_real_
-      mem$pssFileGiB <- if (nrow(keep)) max(keep$pssFileGiB) else NA_real_
-      mem$marginalGiB <- mem$peakGiB - mem$baselineGiB
+      if (nrow(keep)) {
+        iPeak <- which.max(keep$pssAnonGiB)
+        tPeak <- keep$time[[iPeak]]
+        # .inputObjects runs inside simInit(), before the other modules; the baseline starts at the
+        # module's first other event, unless the peak came before it
+        run <- if (is.null(ev$eventType)) rep(TRUE, nrow(ev)) else ev$eventType != ".inputObjects"
+        s <- if (any(run) && ev$start[run][[1]] <= tPeak) ev$start[run][[1]] else ev$start[[1]]
+        mem$peakGiB <- keep$pssAnonGiB[[iPeak]]
+        mem$baselineGiB <- .baselineGiB(samples, keep, s, tPeak)
+        mem$marginalGiB <- mem$peakGiB - mem$baselineGiB
+        mem$pssFileGiB <- max(keep$pssFileGiB)
+      }
     }
     share <- NA_real_
     if (!is.null(w) && el > 0) {
