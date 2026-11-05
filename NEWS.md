@@ -1,3 +1,13 @@
+# spadesBioInfo.core 0.1.51
+
+* New `readScalingNotes()`, `scalingNoteFor()`, `renderCostScaling()`: per-step scaling notes
+  (`cost/scaling.csv`) and the generated `## Cost & Scaling` README section.
+* New `fitStepCost()`: fits a step's memory and time curves from benchmark rows (worker term,
+  data exponents, serial share), with flags and checks against its scaling note.
+* New `benchmarkSubsample()`, `benchmarkPoints()`, `runBenchmarkPoint()`, `runBenchmarkLadder()`:
+  the benchmark harness; each point runs in a fresh child Rscript, with a memory estimate before
+  every launch and cleanup of every process carrying the point's run ID.
+
 # spadesBioInfo.core 0.1.50
 
 * `collectStepCosts()` and `collectModuleCosts()`: the baseline is the lowest sample from just before
