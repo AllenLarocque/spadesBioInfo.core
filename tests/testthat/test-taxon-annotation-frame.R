@@ -193,7 +193,8 @@ test_that("data.table and tibble tables are accepted (and by the validators/join
   f <- taxonAnnotationFrame(ps, list(a = dt), columns = c("partition", "guild"))
   expect_identical(f$partition, c(5L, 10L, 15L, 20L))
   expect_identical(validateByTaxon(dt, "dt"), dt)
-  expect_error(validateByTaxon(rbind(dt, dt[1]), "dt"), "dt has 1 duplicate key")
+  # dt[1L, ], not dt[1]: in installed mode the test env is not data.table-aware
+  expect_error(validateByTaxon(rbind(dt, dt[1L, ]), "dt"), "dt has 1 duplicate key")
   tb <- tibble::as_tibble(nativeTable(rev(TAF_IDS)))
   f2 <- taxonAnnotationFrame(ps, list(a = tb), columns = c("isSym", "score"))
   expect_identical(f2$score, (1:4) / 4)

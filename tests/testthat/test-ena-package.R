@@ -24,10 +24,8 @@ test_that("packageHash ignores row names", {
 test_that("the schema version is part of the identity and is written and read back", {
   t <- fixtureTables()
   h1 <- packageHash(t)
-  # The tests source R/ into the global environment, so the constant lives there.
-  old <- get(".enaSchemaVersion", envir = globalenv())
-  withr::defer(assign(".enaSchemaVersion", old, envir = globalenv()))
-  assign(".enaSchemaVersion", 99L, envir = globalenv())
+  # Rebinds in the namespace and globalenv, so it works installed and helper-sourced.
+  local_mocked_bindings(.enaSchemaVersion = 99L, .package = "spadesBioInfo.core")
   expect_false(identical(packageHash(t), h1))
 })
 

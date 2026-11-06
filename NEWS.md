@@ -1,3 +1,15 @@
+# spadesBioInfo.core 0.1.52
+
+* `runBenchmarkLadder()`: only the first point runs without an estimate; a later point with no
+  done point to estimate from is `skipped: no estimate`.
+* `runBenchmarkLadder()`: a time estimate from the done points (new `timeExponents`, 1 per driver,
+  `nworker` 0 unless named); a point predicted over `timeoutSec` is `skipped: over timeout`. The
+  result has `predictedSec`. `runBenchmarkPoint()` returns the child's `elapsedSec`. A point at
+  least as large as a timed-out point (fewer or as many workers) is
+  `skipped: over timeout (dominates <pointId>)`.
+* `repointBigDescriptors()` loads bigmemory itself, so it works in a session that has not.
+* `renderCostScaling()` renders core's own `core/` notes in core's README instead of a pointer.
+
 # spadesBioInfo.core 0.1.51
 
 * New `readScalingNotes()`, `scalingNoteFor()`, `renderCostScaling()`: per-step scaling notes
