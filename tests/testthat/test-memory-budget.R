@@ -134,11 +134,10 @@ test_that("bad settings stop and name the option and the allowed values", {
 })
 
 test_that("memoryBudgetGb converts GiB to decimal GB and keeps NA", {
-  # The helper sources R/ into globalenv, so the mock replaces the binding there.
-  orig <- memoryBudget
-  withr::defer(assign("memoryBudget", orig, envir = globalenv()))
-  assign("memoryBudget", function(...) list(budgetGiB = 7), envir = globalenv())
+  # Rebinds in the namespace and globalenv, so it works installed and helper-sourced.
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 7), .package = "spadesBioInfo.core")
   expect_equal(memoryBudgetGb(), 7 * 1.073741824)
-  assign("memoryBudget", function(...) list(budgetGiB = NA_real_), envir = globalenv())
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = NA_real_),
+                        .package = "spadesBioInfo.core")
   expect_identical(memoryBudgetGb(), NA_real_)
 })

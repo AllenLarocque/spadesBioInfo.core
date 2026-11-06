@@ -134,7 +134,9 @@ scalingNoteFor <- function(notes, step, backend = NA) {
 #'
 #' Writes between the cost-scaling markers in `<dir>/README.md` (appends the
 #' markers when absent), leaving the rest of the file untouched.
-#' @param dir Module or package folder; its basename is the module name.
+#' @param dir Module or package folder; its basename is the module name. `core/` rows render
+#'   as a pointer to the core README, except in core itself: a `DESCRIPTION` with
+#'   `Package: spadesBioInfo.core`, or with no `DESCRIPTION`, the basename `spadesBioInfo.core`.
 #' @param costDir Folder holding `scaling.csv`.
 #' @param figures Unused until wave 3.
 #' @return The README path, invisibly.
@@ -142,7 +144,10 @@ scalingNoteFor <- function(notes, step, backend = NA) {
 renderCostScaling <- function(dir, costDir = file.path(dir, "cost"), figures = NULL) {
   notes <- readScalingNotes(file.path(costDir, "scaling.csv"))
   modName <- basename(normalizePath(dir, mustWork = FALSE))
-  isCore <- startsWith(notes$step, "core/")
+  # core/ rows point to core's README, except in core's own README (by DESCRIPTION, else by name)
+  descFile <- file.path(dir, "DESCRIPTION")
+  pkg <- if (file.exists(descFile)) unname(read.dcf(descFile, fields = "Package")[1, 1]) else modName
+  isCore <- startsWith(notes$step, "core/") & !identical(pkg, "spadesBioInfo.core")
   isTotal <- notes$step == modName
   lines <- c(.scalingStart, "## Cost & Scaling", "")
   for (s in notes$step[isCore])

@@ -66,8 +66,8 @@ test_that("precedence: named backend over blank, full name over prefix", {
   expect_equal(scalingNoteFor(n2, "s")$why, "blank")
 })
 
-modWithReadme <- function(rows, readme) {
-  dir <- file.path(tempfile("p"), "myMod")
+modWithReadme <- function(rows, readme, name = "myMod") {
+  dir <- file.path(tempfile("p"), name)
   writeNotes(rows, dir)
   writeBin(charToRaw(readme), file.path(dir, "README.md"))
   dir
@@ -116,6 +116,32 @@ test_that("a core/ row renders as a pointer", {
   dir <- modWithReadme(list(mkRow(step = "core/buildPdistBig")), "# x\n")
   renderCostScaling(dir)
   txt <- paste(readLines(file.path(dir, "README.md")), collapse = "\n")
+  expect_match(txt, "`core/buildPdistBig`: see the spadesBioInfo.core README", fixed = TRUE)
+})
+
+test_that("core's own README renders its core/ rows, not a pointer", {
+  dir <- modWithReadme(list(mkRow(step = "core/buildPdistBig", time = "taxa^2")), "# x\n",
+                       name = "spadesBioInfo.core")
+  renderCostScaling(dir)
+  txt <- paste(readLines(file.path(dir, "README.md")), collapse = "\n")
+  expect_false(grepl("see the spadesBioInfo.core README", txt, fixed = TRUE))
+  expect_match(txt, "### Steps", fixed = TRUE)
+  expect_match(txt, "| `core/buildPdistBig` |", fixed = TRUE)
+})
+
+test_that("core is found by its DESCRIPTION when the folder is renamed", {
+  dir <- modWithReadme(list(mkRow(step = "core/buildPdistBig", time = "taxa^2")), "# x\n",
+                       name = "core-clone")
+  writeLines("Package: spadesBioInfo.core", file.path(dir, "DESCRIPTION"))
+  renderCostScaling(dir)
+  txt <- paste(readLines(file.path(dir, "README.md")), collapse = "\n")
+  expect_false(grepl("see the spadesBioInfo.core README", txt, fixed = TRUE))
+  expect_match(txt, "| `core/buildPdistBig` |", fixed = TRUE)
+  # a folder named spadesBioInfo.core holding another package is not core
+  other <- modWithReadme(list(mkRow(step = "core/buildPdistBig")), "# x\n", name = "spadesBioInfo.core")
+  writeLines("Package: otherPkg", file.path(other, "DESCRIPTION"))
+  renderCostScaling(other)
+  txt <- paste(readLines(file.path(other, "README.md")), collapse = "\n")
   expect_match(txt, "`core/buildPdistBig`: see the spadesBioInfo.core README", fixed = TRUE)
 })
 

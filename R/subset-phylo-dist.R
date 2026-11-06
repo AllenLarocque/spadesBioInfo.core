@@ -119,6 +119,9 @@ subsetPhyloDist <- function(tree, wd, nworker = 1,
 #' @export
 repointBigDescriptors <- function(wd) {
   here <- sub("/+$", "", normalizePath(wd, winslash = "/", mustWork = TRUE))
+  # dget() needs the big.matrix.descriptor class; load it here, not via NAMESPACE, so it also
+  # holds when R/ is sourced and costs nothing for callers that never touch a descriptor.
+  loadNamespace("bigmemory")
   for (f in list.files(wd, pattern = "\\.desc$", full.names = TRUE)) {
     desc <- dget(f)
     old <- desc@description$dirname

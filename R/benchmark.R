@@ -173,7 +173,7 @@ benchmarkPoints <- function(full, axes, workerAxisTaxa = 1/4, interactionTaxa = 
 #' @param moduleVersions passed to [collectStepCosts()].
 #' @param keep keep `cache/` and `work/` after a `done` point.
 #' @param role,predictedGiB,budgetGiB written to the point log (set by [runBenchmarkLadder()]).
-#' @return list(status, rows, attemptDir). `status` is `done`, `timeout`, `crashed` or
+#' @return list(status, rows, attemptDir, elapsedSec). `status` is `done`, `timeout`, `crashed` or
 #'   `no measurement` (no computed, sufficient row of `step` with a finite `marginalGiB`).
 #' @export
 runBenchmarkPoint <- function(code, step, pointId, outDir, timeoutSec, moduleVersions = character(),
@@ -234,57 +234,94 @@ runBenchmarkPoint <- function(code, step, pointId, outDir, timeoutSec, moduleVer
     unlink(dirs[1:2], recursive = TRUE)
   }
   .logBenchmarkPoint(outDir, pointId, step, role, status, elapsed, predictedGiB, budgetGiB, note)
-  list(status = status, rows = rows, attemptDir = attempt)
+  list(status = status, rows = rows, attemptDir = attempt, elapsedSec = elapsed)
 }
 
 #' Run a benchmark ladder, estimating each point before it starts
 #'
-#' Points run in `order`. Once the step has a done point, every launch is predicted from each done
-#' point as `baseline + marginal * prod(ratio_d ^ e_d)` (ratios may be below 1; `e_d` from
-#' `exponents`, 1 for drivers not named, `nworker` always 1) and the largest prediction is used.
-#' Before the first done point, a point runs without an estimate. A prediction above
-#' `memoryBudget()$budgetGiB` (re-read before each point) is `skipped: over budget`; with no budget
-#' (`NA`) the point is `skipped: no budget`. One failure never stops the ladder.
+#' Points run in `order`. Only the first point runs without an estimate; a later point with no done
+#' point to estimate from is `skipped: no estimate`. Every other launch is predicted from each done
+#' point and the largest prediction is used:
+#' memory `baseline + marginal * prod(ratio_d ^ e_d)` (`e_d` from `exponents`, 1 for drivers not
+#' named, `nworker` always 1); time `overhead + stepSec * prod(ratio_d ^ t_d)`, where `stepSec` is
+#' the step's `elapsedSec + nestedSec` summed over its computed rows (at most the child's wall
+#' time), `overhead` the rest of the wall time, and `t_d` comes from `timeExponents` (1 for
+#' drivers not named, `nworker` 0 unless named). Ratios may be below 1.
+#' A memory prediction above `memoryBudget()$budgetGiB` (re-read before each point) is
+#' `skipped: over budget`; with no budget (`NA`) the point is `skipped: no budget`; a time
+#' prediction above `timeoutSec` is `skipped: over timeout`. A point at least as large as a
+#' timed-out point on every driver (`nworker` at most as large) is
+#' `skipped: over timeout (dominates <pointId>)`. One failure never stops the ladder.
 #' @param points data.frame with `pointId`, `role`, `order` and driver columns.
 #' @param makeCode function of a one-row `points` data.frame returning the child's code.
 #' @param step,outDir,timeoutSec,moduleVersions as in [runBenchmarkPoint()].
 #' @param exponents named memory exponents per driver.
-#' @return `points` in run order with `status`, `predictedGiB`, `budgetGiB` and `note`.
+#' @param timeExponents named time exponents per driver.
+#' @return `points` in run order with `status`, `predictedGiB`, `predictedSec`, `budgetGiB` and
+#'   `note`.
 #' @export
 runBenchmarkLadder <- function(points, makeCode, step, outDir, timeoutSec, exponents = c(taxa = 2),
-                               moduleVersions = character()) {
+                               moduleVersions = character(), timeExponents = numeric()) {
   points <- as.data.frame(points, stringsAsFactors = FALSE)
   points <- points[order(points$order), , drop = FALSE]
   rownames(points) <- NULL
   drv <- intersect(names(points), .costDriverNames)
-  e <- stats::setNames(rep(1, length(drv)), drv)
-  hit <- intersect(names(exponents), drv)
-  e[hit] <- exponents[hit]
-  if ("nworker" %in% drv) e[["nworker"]] <- 1
+  expo <- function(given, nworker) {
+    e <- stats::setNames(rep(1, length(drv)), drv)
+    hit <- intersect(names(given), drv)
+    e[hit] <- given[hit]
+    if ("nworker" %in% drv && !is.na(nworker)) e[["nworker"]] <- nworker
+    e
+  }
+  e <- expo(exponents, 1)
+  te <- expo(timeExponents, if ("nworker" %in% names(timeExponents)) NA else 0)
   X <- as.matrix(points[drv])
 
-  done <- list()   # row index -> list(baseline, marginal)
+  done <- list()   # row index -> list(baseline, marginal, overhead, stepSec)
+  timedOut <- integer()   # row indices
+  # j is at least timed-out point i on every driver, nworker excepted (at most there)
+  dominates <- function(j, i) {
+    a <- X[j, ]; b <- X[i, ]
+    w <- names(a) == "nworker"
+    all((a >= b)[!w], (a <= b)[w], na.rm = TRUE)
+  }
   points$status <- NA_character_; points$predictedGiB <- NA_real_
-  points$budgetGiB <- NA_real_; points$note <- ""
+  points$predictedSec <- NA_real_; points$budgetGiB <- NA_real_; points$note <- ""
   for (j in seq_len(nrow(points))) {
     p <- points[j, , drop = FALSE]
     budget <- memoryBudget()$budgetGiB
     points$budgetGiB[[j]] <- budget
-    pred <- NA_real_
+    pred <- predSec <- NA_real_
     if (length(done)) {
       refs <- as.integer(names(done))
-      preds <- vapply(refs, function(i) {
+      scale <- function(i, ex) {
         r <- X[j, ] / X[i, ]
         r[is.na(r)] <- 1   # a driver unset at either point does not scale
-        done[[as.character(i)]]$baseline + done[[as.character(i)]]$marginal * prod(r^e)
+        prod(r^ex)
+      }
+      preds <- vapply(refs, function(i) {
+        d <- done[[as.character(i)]]; d$baseline + d$marginal * scale(i, e)
+      }, 0)
+      secs <- vapply(refs, function(i) {
+        d <- done[[as.character(i)]]; d$overhead + d$stepSec * scale(i, te)
       }, 0)
       k <- which.max(preds)
       pred <- preds[[k]]
+      kt <- if (all(is.na(secs))) NA_integer_ else which.max(secs)
+      predSec <- if (is.na(kt)) NA_real_ else secs[[kt]]
       points$predictedGiB[[j]] <- pred
-      points$note[[j]] <- paste0("estimate from ", points$pointId[[refs[[k]]]])
+      points$predictedSec[[j]] <- predSec
+      points$note[[j]] <- paste0("estimate from ", points$pointId[[refs[[k]]]],
+                                 if (!is.na(kt)) paste0("; predicted ", round(predSec), " s from ",
+                                                        points$pointId[[refs[[kt]]]]))
     }
+    big <- Filter(function(i) dominates(j, i), timedOut)
     skip <- if (is.na(budget)) "skipped: no budget"
+            else if (length(big))
+              paste0("skipped: over timeout (dominates ", points$pointId[[big[[1]]]], ")")
+            else if (j > 1L && !length(done)) "skipped: no estimate"
             else if (!is.na(pred) && pred > budget) "skipped: over budget"
+            else if (!is.na(predSec) && predSec > timeoutSec) "skipped: over timeout"
     if (!is.null(skip)) {
       points$status[[j]] <- skip
       .logBenchmarkPoint(outDir, p$pointId, step, p$role, skip, NA_real_, pred, budget,
@@ -300,11 +337,20 @@ runBenchmarkLadder <- function(points, makeCode, step, outDir, timeoutSec, expon
         list(status = "crashed", rows = NULL, note = msg)
       })
     points$status[[j]] <- res$status
+    if (identical(res$status, "timeout")) timedOut <- c(timedOut, j)
     if (identical(res$status, "done")) {
       r <- res$rows[res$rows$step == step & res$rows$computed %in% TRUE &
                       res$rows$insufficient %in% FALSE & is.finite(res$rows$marginalGiB), , drop = FALSE]
       r <- r[which.max(r$peakGiB), , drop = FALSE]
-      done[[as.character(j)]] <- list(baseline = r$baselineGiB, marginal = r$marginalGiB)
+      wall <- if (is.null(res$elapsedSec)) NA_real_ else res$elapsedSec
+      # the step's time: own plus nested seconds over its computed rows, capped at the wall time
+      cr <- res$rows[res$rows$step == step & res$rows$computed %in% TRUE, , drop = FALSE]
+      nested <- if (is.null(cr$nestedSec)) 0 else cr$nestedSec
+      own <- sum(cr$elapsedSec + ifelse(is.na(nested), 0, nested), na.rm = TRUE)
+      stepSec <- if (!(own > 0)) wall else min(own, wall, na.rm = TRUE)
+      overhead <- if (is.na(wall)) 0 else wall - stepSec
+      done[[as.character(j)]] <- list(baseline = r$baselineGiB, marginal = r$marginalGiB,
+                                      overhead = overhead, stepSec = stepSec)
     }
   }
   points

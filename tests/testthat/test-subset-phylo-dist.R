@@ -156,6 +156,25 @@ test_that("repointBigDescriptors is exported and rewrites a stale dirname", {
   expect_equal(dim(bigmemory::attach.big.matrix(desc)), c(6, 6))
 })
 
+test_that("repointBigDescriptors works in a session where bigmemory is not loaded", {
+  skip_if_not_installed("bigmemory")
+  wdA <- tempfile("rpA-"); wdB <- tempfile("rpB-"); dir.create(wdA)
+  on.exit(unlink(c(wdA, wdB), recursive = TRUE), add = TRUE)
+  bigmemory::filebacked.big.matrix(2, 2, backingfile = "m.bin", descriptorfile = "m.desc",
+                                   backingpath = wdA)
+  dir.create(wdB); file.copy(list.files(wdA, full.names = TRUE), wdB)
+  # The child gets the function under test (source or installed) and nothing else.
+  child <- c(sprintf(".libPaths(%s, include.site = FALSE)", deparse1(.libPaths())),
+             'stopifnot(!"bigmemory" %in% loadedNamespaces())',
+             paste("repointBigDescriptors <-", paste(deparse(repointBigDescriptors), collapse = "\n")),
+             sprintf("repointBigDescriptors(%s)", deparse1(wdB)))
+  f <- tempfile(fileext = ".R"); writeLines(child, f); on.exit(unlink(f), add = TRUE)
+  out <- suppressWarnings(system2("Rscript", shQuote(f), stdout = TRUE, stderr = TRUE))
+  expect_null(attr(out, "status"), info = paste(out, collapse = "\n"))
+  desc <- dget(file.path(wdB, "m.desc"))
+  expect_identical(sub("/+$", "", desc@description$dirname), normalizePath(wdB))
+})
+
 # ---------------------------------------------------------------------------
 # 0.1.39 (Codex review finding 1): two trees over the SAME taxa must never share a distance.
 # ---------------------------------------------------------------------------

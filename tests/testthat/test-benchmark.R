@@ -136,7 +136,8 @@ test_that("a timed-out point leaves no process with its run ID", {
 
 test_that("a failure does not stop the ladder; one over budget is skipped", {
   out <- withr::local_tempdir()
-  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 1.5))
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 1.5),
+                        .package = "spadesBioInfo.core")
   pts <- data.frame(pointId = c("a", "b", "c"), role = "axis:taxa",
                     taxa = c(10, 20, 5), nRuns = c(1, 1, 2), order = c(1, 2, 3))
   makeCode <- function(p) if (p$pointId == "c") 'stop("boom")' else allocCode(1, taxa = p$taxa)
@@ -153,7 +154,8 @@ test_that("a failure does not stop the ladder; one over budget is skipped", {
 
 test_that("after the first done point every point is estimated from the largest prediction", {
   out <- withr::local_tempdir()
-  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 0.9))
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 0.9),
+                        .package = "spadesBioInfo.core")
   pts <- benchmarkPoints(list(taxa = 1600, samples = 160), list(nRuns = c(99, 299, 999)),
                          workers = FALSE)
   first <- pts$pointId[pts$order == 1]
@@ -173,11 +175,125 @@ test_that("after the first done point every point is estimated from the largest 
 
 test_that("with no memory budget a point is skipped, not run unchecked", {
   out <- withr::local_tempdir()
-  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = NA_real_))
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = NA_real_),
+                        .package = "spadesBioInfo.core")
   ran <- FALSE
   pts <- data.frame(pointId = "a", role = "axis:taxa", taxa = 10, order = 1)
   res <- runBenchmarkLadder(pts, function(p) { ran <<- TRUE; "1" }, "t/bench", out, timeoutSec = 60)
   expect_equal(res$status, "skipped: no budget")
   expect_false(ran)
   expect_equal(utils::read.csv(file.path(out, "benchmark-points.csv"))$status, "skipped: no budget")
+})
+
+# A mocked point: no child; `elapsedSec` is the child's wall time, `stepSec` the step's own.
+fakePoint <- function(status, marginal = 0.1, elapsedSec = 100, stepSec = 80, nestedSec = 0) {
+  rows <- data.frame(step = "t/bench", computed = TRUE, insufficient = FALSE, baselineGiB = 0.1,
+                     marginalGiB = marginal, peakGiB = 0.1 + marginal, elapsedSec = stepSec,
+                     nestedSec = nestedSec)
+  list(status = status, rows = if (status == "done") rows, attemptDir = NA_character_,
+       elapsedSec = elapsedSec)
+}
+
+test_that("a ladder whose first point crashes skips the rest: no estimate", {
+  out <- withr::local_tempdir()
+  ran <- character()
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 100),
+                        runBenchmarkPoint = function(code, step, pointId, ...) {
+                          ran <<- c(ran, pointId); fakePoint("crashed")
+                        }, .package = "spadesBioInfo.core")
+  pts <- data.frame(pointId = c("a", "b", "c"), role = "axis:taxa", taxa = c(10, 5, 20),
+                    order = 1:3)
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", out, timeoutSec = 600)
+  expect_equal(ran, "a")
+  expect_equal(res$status, c("crashed", "skipped: no estimate", "skipped: no estimate"))
+  expect_equal(utils::read.csv(file.path(out, "benchmark-points.csv"))$status,   # the mock logs nothing
+               rep("skipped: no estimate", 2))
+})
+
+test_that("a point predicted over the timeout is skipped, one under it runs", {
+  out <- withr::local_tempdir()
+  ran <- character()
+  st <- c(a = "done", b = "crashed", c = "done", d = "done")
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 100),
+                        runBenchmarkPoint = function(code, step, pointId, ...) {
+                          ran <<- c(ran, pointId); fakePoint(st[[pointId]])
+                        }, .package = "spadesBioInfo.core")
+  # from a (100 s wall, 80 s step): overhead 20 + 80 x ratio
+  pts <- data.frame(pointId = c("a", "b", "c", "e", "d"), role = "axis:taxa",
+                    taxa = c(10, 12, 15, 20, 10), nworker = c(1, 1, 1, 1, 8), order = 1:5)
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", out, timeoutSec = 150)
+  expect_equal(res$predictedSec, c(NA, 20 + 80 * 1.2, 20 + 80 * 1.5, 20 + 80 * 2, 100))
+  expect_equal(res$status, c("done", "crashed", "done", "skipped: over timeout", "done"))
+  expect_equal(ran, c("a", "b", "c", "d"))   # b crashed with an estimate: the ladder goes on
+  log <- utils::read.csv(file.path(out, "benchmark-points.csv"))
+  expect_match(log$note[log$pointId == "e"], "estimate from a; predicted 180 s from a", fixed = TRUE)
+})
+
+test_that("timeExponents scale the time estimate", {
+  out <- withr::local_tempdir()
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 100),
+                        runBenchmarkPoint = function(...) fakePoint("done"),
+                        .package = "spadesBioInfo.core")
+  pts <- data.frame(pointId = c("a", "b"), role = "axis:taxa", taxa = c(10, 20), order = 1:2)
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", out, timeoutSec = 1000,
+                            timeExponents = c(taxa = 2))
+  expect_equal(res$predictedSec[[2]], 20 + 80 * 4)
+})
+
+test_that("step time sums elapsed and nested seconds over the step's computed rows, capped at wall", {
+  out <- withr::local_tempdir()
+  two <- function(wall) {
+    p <- fakePoint("done", elapsedSec = wall)
+    p$rows <- rbind(p$rows, p$rows, p$rows)
+    p$rows$elapsedSec <- c(30, 20, 99); p$rows$nestedSec <- c(10, NA, 0)
+    p$rows$computed <- c(TRUE, TRUE, FALSE)   # a load is not step time
+    p
+  }
+  wall <- 100
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 100),
+                        runBenchmarkPoint = function(...) two(wall), .package = "spadesBioInfo.core")
+  pts <- data.frame(pointId = c("a", "b"), role = "axis:taxa", taxa = c(10, 20), order = 1:2)
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", out, timeoutSec = 1000)
+  expect_equal(res$predictedSec[[2]], (100 - 60) + 60 * 2)
+  wall <- 40   # the step's rows exceed the wall time: capped
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", withr::local_tempdir(), timeoutSec = 1000)
+  expect_equal(res$predictedSec[[2]], 40 * 2)
+})
+
+test_that("a point with an estimate that times out does not stop the ladder", {
+  out <- withr::local_tempdir()
+  ran <- character()
+  st <- c(a = "done", b = "timeout", c = "done")
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 100),
+                        runBenchmarkPoint = function(code, step, pointId, ...) {
+                          ran <<- c(ran, pointId); fakePoint(st[[pointId]])
+                        }, .package = "spadesBioInfo.core")
+  pts <- data.frame(pointId = c("a", "b", "c"), role = "axis:taxa", taxa = c(10, 12, 8),
+                    order = 1:3)
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", out, timeoutSec = 1000)
+  expect_false(is.na(res$predictedSec[[2]]))
+  expect_equal(res$status, c("done", "timeout", "done"))
+  expect_equal(ran, c("a", "b", "c"))
+})
+
+test_that("a point that dominates a timed-out point is skipped; smaller or unrelated ones run", {
+  out <- withr::local_tempdir()
+  ran <- character()
+  st <- c(a = "done", base = "timeout")
+  local_mocked_bindings(memoryBudget = function(...) list(budgetGiB = 100),
+                        runBenchmarkPoint = function(code, step, pointId, ...) {
+                          ran <<- c(ran, pointId)
+                          fakePoint(if (pointId %in% names(st)) st[[pointId]] else "done")
+                        }, .package = "spadesBioInfo.core")
+  pts <- data.frame(
+    pointId = c("a", "base", "rt2", "rt3w2", "rt3w8", "smaller", "unrelated"),
+    role = "axis:randTime",
+    taxa     = c(5, 10, 10, 10, 10, 10,  20),
+    randTime = c(1,  1,  2,  3,  3, 0.5, 0.5),
+    nworker  = c(1,  4,  4,  2,  8,   4,   4),
+    order = 1:7)
+  res <- runBenchmarkLadder(pts, function(p) "1", "t/bench", out, timeoutSec = 1e6)
+  expect_equal(res$status, c("done", "timeout", "skipped: over timeout (dominates base)",
+                             "skipped: over timeout (dominates base)", "done", "done", "done"))
+  expect_equal(ran, c("a", "base", "rt3w8", "smaller", "unrelated"))
 })
