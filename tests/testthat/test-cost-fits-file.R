@@ -21,11 +21,11 @@ test_that("fitRecord gives one pooled memory row", {
   expect_equal(r$a, f$memory$a)
 })
 
-test_that("exponents show 3 significant digits and driverRange skips dropped rows", {
+test_that("exponents keep 6 significant digits and driverRange skips dropped rows", {
   rows <- .fixRows(interaction = FALSE)
   rows$marginalGiB <- ifelse(rows$nworker == 1, 2 * rows$taxa^1.23456 / 1e3, rows$marginalGiB)
   r <- .rec(rows)
-  expect_match(r$exponents, "^taxa\\^1\\.23 ")
+  expect_match(r$exponents, "^taxa\\^1\\.2345[56] ")
   # a row with non-positive memory is dropped by the fitter, so it is not in driverRange
   rows <- .fixRows(interaction = FALSE)
   rows$marginalGiB[rows$taxa == 1000 & rows$nworker == 1] <- 0

@@ -1,3 +1,21 @@
+# spadesBioInfo.core 0.1.54
+
+* `costReport()`: a what-if key other than `ranks` and the data drivers only gives rows for steps
+  whose drivers include it (an `nworker` what-if no longer relabels steps that use no workers).
+* `print.costReport()`: one line per row (the table is no longer split into column blocks), and
+  numbers are no longer padded to a shared number of decimals. It shows the baseline, and the
+  basis column adds the regime (`upper bound`, `may exceed`) and any missing drivers.
+* `predictStepCost()`: `run-confirmed` only when the nearby run measured within ×0.67–×1.5 of the
+  prediction (otherwise flag `a nearby run differs from the curve`, basis and range kept); a
+  request below the measured range is `extrapolated` too; the worker count extrapolates only steps
+  that use workers (`workerMax` > 1); a negative `w` never takes the peak below the data term.
+* `fitRecord()`: exponents keep 6 significant digits (3 lost up to 5 % at 110,000 taxa); the
+  rendered README still shows 3.
+* `print.costReport()`: the total time is "about" (every call priced at the full table, steps with
+  no time not counted), not "at least"; the largest peak is labelled the central estimate.
+* `costReport()`: when the only what-ifs that fit have no time estimate, the summary names one
+  with "(time unknown)" instead of saying none fits.
+
 # spadesBioInfo.core 0.1.53
 
 * `predictStepCost()`: one step's peak memory and time for planned drivers, from the step's cost

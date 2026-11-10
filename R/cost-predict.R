@@ -9,6 +9,11 @@
   t <- strsplit(trimws(x), " ", fixed = TRUE)[[1]]
   stats::setNames(as.numeric(sub("^.*:", "", t)), sub("=.*$", "", t))
 }
+.rangeBottoms <- function(x) {
+  if (is.na(x) || !nzchar(x)) return(numeric(0))
+  t <- strsplit(trimws(x), " ", fixed = TRUE)[[1]]
+  stats::setNames(as.numeric(sub("^.*=([^:]*):.*$", "\\1", t)), sub("=.*$", "", t))
+}
 
 .isNum <- function(x) is.numeric(x) && length(x) == 1L && !is.na(x)
 
@@ -60,11 +65,14 @@
   list(value = row$a * prod(v^e), held = held)
 }
 
-# Largest requested / measured-top ratio over the drivers and the worker count.
+# How far outside the measured range the request is: the largest of requested / measured top and
+# measured bottom / requested, over the drivers and (for a step that uses workers) the worker count.
 .topRatio <- function(row, drivers, n) {
   tops <- .rangeTops(row$driverRange)
-  r <- vapply(names(tops), function(d) drivers[[d]] / tops[[d]], numeric(1))
-  if (!is.na(row$workerMax)) r <- c(r, n / row$workerMax)
+  bottoms <- .rangeBottoms(row$driverRange)
+  r <- vapply(names(tops), function(d) max(drivers[[d]] / tops[[d]], bottoms[[d]] / drivers[[d]]),
+              numeric(1))
+  if (!is.na(row$workerMax) && row$workerMax > 1) r <- c(r, n / row$workerMax)
   max(c(0, r), na.rm = TRUE)
 }
 
@@ -150,7 +158,8 @@ predictStepCost <- function(step, drivers, backend = NA, costDir, records = NULL
     D <- .dataTerm(m, drivers)
     if (D$held) flags <- c(flags, "negative exponent held at measured top")
     if (!is.na(m$k)) {
-      peak <- D$value * (1 + m$k * (n - 1)) + ifelse(is.na(m$w), 0, m$w) * n
+      # a negative w (a fit artefact) never takes the peak below the data term
+      peak <- max(D$value, D$value * (1 + m$k * (n - 1)) + ifelse(is.na(m$w), 0, m$w) * n)
     } else if (!is.na(m$r)) {
       peak <- D$value * (1 + m$r * (n - 1))
       flags <- c(flags, "worker term from one taxa level")
@@ -172,12 +181,19 @@ predictStepCost <- function(step, drivers, backend = NA, costDir, records = NULL
            else if ("drivers interact" %in% carried) "drivers interact"
            else "measured"
   wide <- grepl("^extrapolated", basis) || basis == "drivers interact"
-  # a nearby run of the same backend and worker count confirms the curve
+  # a nearby run of the same backend and worker count confirms the curve when what it measured
+  # is within the range (x0.67 to x1.5) of the prediction; otherwise the basis and range stay
   if (!is.null(runs) && nrow(runs) && basis != "drivers interact") {
     near <- Reduce(`&`, c(list(runs$nworker == n),
                           lapply(setdiff(fitted, "nworker"), function(d)
                             !is.na(runs[[d]]) & abs(runs[[d]] / drivers[[d]] - 1) <= 0.25)))
-    if (any(near)) { basis <- "run-confirmed"; wide <- FALSE }
+    inRange <- function(measured, predicted)
+      is.na(predicted) | (!is.na(measured) & measured >= 0.67 * predicted & measured <= 1.5 * predicted)
+    if (any(near)) {
+      agree <- near & inRange(runs$marginalGiB, peak) & inRange(runs$elapsedSec, secs)
+      if (any(agree)) { basis <- "run-confirmed"; wide <- FALSE }
+      else flags <- c(flags, "a nearby run differs from the curve")
+    }
   }
   lo <- if (wide) 0.67 else 1
   hi <- if (wide) 1.5 else 1

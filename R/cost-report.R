@@ -73,7 +73,8 @@
 #'   entry, whose time is the module's overhead. `alternative` is NA, or a group label for entries
 #'   of which only one runs. `drivers` holds the analysis drivers; data drivers come from `dims`.
 #' @param whatIf Named list; each value gives one row per entry, one key at a time. Key `ranks`
-#'   replaces `taxa` by `dims$ranks[[rank]]`.
+#'   replaces `taxa` by `dims$ranks[[rank]]`. Keys `ranks` and the data drivers apply to every
+#'   step; any other key (such as `nworker`) only to steps whose `drivers` include it.
 #' @param budget A [memoryBudget()] list or a number of GiB.
 #' @param records Run step-costs rows (data.frame), used for predictions, baselines and overhead.
 #' @return A data.frame of class `costReport` with attribute `summary`.
@@ -131,8 +132,11 @@ costReport <- function(dims, plan, whatIf = list(), budget = memoryBudget(), rec
   rows <- lapply(plan, one, label = "plan")
   # a module's overhead does not depend on any what-if key
   steps <- Filter(function(e) !identical(e$step, e$module), plan)
+  # a step that does not take a key (a step with no workers, for nworker) gets no row for it
+  takes <- function(e, key) key %in% c("ranks", .dataDrivers, names(na1(e$drivers)))
   for (key in names(whatIf)) for (v in whatIf[[key]])
-    rows <- c(rows, lapply(steps, one, label = paste0(key, "=", v), key = key, value = v))
+    rows <- c(rows, lapply(Filter(function(e) takes(e, key), steps), one,
+                           label = paste0(key, "=", v), key = key, value = v))
   out <- do.call(rbind, rows)
   rownames(out) <- NULL
 
@@ -149,9 +153,11 @@ costReport <- function(dims, plan, whatIf = list(), budget = memoryBudget(), rec
   key <- function(step, be) ifelse(is.na(be) | !nzchar(be), step, paste0(step, " [", be, "]"))
   failing <- unique(key(pl$step, pl$backend)[pl$fits %in% FALSE])
   cheapest <- lapply(stats::setNames(failing, failing), function(k) {
-    w <- out[!isPlan & key(out$step, out$backend) == k & out$fits %in% TRUE & !is.na(out$timeSec), ,
-             drop = FALSE]
-    if (nrow(w)) w$whatIf[which.min(w$timeSec)] else "none of the what-ifs fits"
+    w <- out[!isPlan & key(out$step, out$backend) == k & out$fits %in% TRUE, , drop = FALSE]
+    timed <- w[!is.na(w$timeSec), , drop = FALSE]
+    if (nrow(timed)) timed$whatIf[which.min(timed$timeSec)]
+    else if (nrow(w)) paste0(w$whatIf[1], " (time unknown)")
+    else "none of the what-ifs fits"
   })
   unknown <- pl[is.na(tot), , drop = FALSE]
   attr(out, "summary") <- list(
@@ -168,12 +174,16 @@ costReport <- function(dims, plan, whatIf = list(), budget = memoryBudget(), rec
 #' @export
 print.costReport <- function(x, ...) {
   s <- attr(x, "summary")
-  fmt <- function(v) ifelse(is.na(v), "NA", format(signif(v, 3), trim = TRUE, scientific = FALSE))
+  fmt <- function(v) ifelse(is.na(v), "NA",
+                            vapply(signif(v, 3), format, "", trim = TRUE, scientific = FALSE))
   dur <- function(v) if (is.na(v)) "NA" else if (v >= 3600) sprintf("%.1f h", v / 3600)
                      else if (v >= 60) sprintf("%.1f min", v / 60) else sprintf("%.3g s", v)
   cat("Budget: ", fmt(s$budgetGiB), " GiB (", s$budgetMethod, ")\n", sep = "")
-  cat("Largest peak: ", fmt(s$largestPeakGiB), " GiB (", s$largestPeakStep, ")\n", sep = "")
-  cat("Total time: ", if (length(s$timeUnknown)) "at least ", dur(s$totalTimeSec), "\n", sep = "")
+  cat("Largest peak (central estimate): ", fmt(s$largestPeakGiB), " GiB (", s$largestPeakStep, ")\n",
+      sep = "")
+  # not a bound either way: every call is priced at the full table, and steps with no time are left out
+  cat("Total time: about ", dur(s$totalTimeSec), " (every call priced at the full table",
+      if (length(s$timeUnknown)) "; steps with no time not counted", ")\n", sep = "")
   if (length(s$timeUnknown)) cat("Time unknown for: ", paste(s$timeUnknown, collapse = ", "), "\n", sep = "")
   if (length(s$notFitting)) {
     cat("Not fitting:\n")
@@ -183,8 +193,17 @@ print.costReport <- function(x, ...) {
   tab <- data.frame(step = x$step, backend = x$backend, whatIf = x$whatIf,
                     `peak (low–high)` = ifelse(is.na(x$peakGiB), "NA",
                       paste0(fmt(x$peakGiB), " (", fmt(x$peakLow), "–", fmt(x$peakHigh), ")")),
-                    time = vapply(x$timeSec, dur, ""), fits = x$fits, basis = x$basis,
+                    time = vapply(x$timeSec, dur, ""), baseline = fmt(x$baselineGiB),
+                    fits = x$fits,
+                    basis = paste0(x$basis, ifelse(is.na(x$regime), "", paste0("; ", x$regime)),
+                                   ifelse(is.na(x$missing) | !nzchar(x$missing), "",
+                                          paste0(" (needs ", x$missing, ")"))),
                     flags = x$flags, check.names = FALSE, stringsAsFactors = FALSE)
+  # one line per row: wide enough that the columns are not split into blocks
+  widest <- sum(vapply(tab, function(v) max(nchar(c(names(tab), as.character(v))), na.rm = TRUE), 0)) +
+    ncol(tab)
+  old <- options(width = max(getOption("width"), min(widest, 10000)))
+  on.exit(options(old))
   print.data.frame(tab, row.names = FALSE, right = FALSE)
   invisible(x)
 }
