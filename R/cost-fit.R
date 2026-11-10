@@ -5,14 +5,6 @@
 .fitFlags <- c("worker term not measured", "regime not measured",
                "disagrees with note", "drivers interact")
 
-# "taxa^2 samples^1" -> c(taxa = 2, samples = 1); numeric(0) when blank.
-.noteExponents <- function(x) {
-  if (is.null(x) || length(x) != 1L || is.na(x) || !nzchar(trimws(x))) return(numeric(0))
-  t <- strsplit(trimws(x), " ", fixed = TRUE)[[1]]
-  t <- t[nzchar(t)]
-  stats::setNames(as.numeric(sub("^.*\\^", "", t)), sub("\\^.*$", "", t))
-}
-
 .hasRole <- function(rows, pattern) grepl(pattern, rows$role)
 .workers <- function(rows) ifelse(is.na(rows$nworker), 1, rows$nworker)
 
@@ -43,7 +35,7 @@
   }
   cf <- stats::lm.fit(design, log(y))$coefficients
   exps[names(vary)] <- unname(cf[-1])
-  list(a = exp(unname(cf[1])), exponents = exps, n = length(y), nDropped = nDropped, reason = reason)
+  list(a = exp(unname(cf[1])), exponents = exps, n = length(y), nDropped = nDropped, reason = reason, used = X)
 }
 
 .powerPredict <- function(fit, row) {
@@ -147,8 +139,8 @@ fitStepCost <- function(rows, note = NULL, inSession = FALSE, workers = TRUE) {
   ax <- rows[isAxis, , drop = FALSE]
 
   # candidate drivers: anything with a value in the rows, or named by the note
-  nm <- if (is.null(note)) numeric(0) else .noteExponents(note$memory)
-  nt <- if (is.null(note)) numeric(0) else .noteExponents(note$time)
+  nm <- if (is.null(note)) numeric(0) else parseExponents(note$memory)
+  nt <- if (is.null(note)) numeric(0) else parseExponents(note$time)
   fitCols <- setdiff(.costDriverNames, "nworker")
   has <- vapply(fitCols, function(d) any(!is.na(rows[[d]])), logical(1))
   cand <- fitCols[has | fitCols %in% c(names(nm), names(nt))]
@@ -212,4 +204,70 @@ fitStepCost <- function(rows, note = NULL, inSession = FALSE, workers = TRUE) {
 
   list(memory = memFit, time = timeFit, k = k, w = w, s = sh$s, reasons = reasons,
        regimes = regimes, flags = flags[order(match(flags, .fitFlags))], checks = checks)
+}
+
+# One driver's min:max over the rows, for each fitted driver: "taxa=6890:27558 samples=18:74".
+.driverRange <- function(rows, drivers) {
+  rg <- vapply(drivers, function(d) {
+    v <- rows[[d]][!is.na(rows[[d]])]
+    paste0(d, "=", format(min(v), digits = 15), ":", format(max(v), digits = 15))
+  }, character(1))
+  paste(rg, collapse = " ")
+}
+
+# r = (M(nmax)/M(1) - 1)/(nmax - 1) from the rows on the worker axis.
+.workerRatio <- function(rows) {
+  r <- rows[.hasRole(rows, "(^|,)\\s*axis:nworker\\s*(,|$)"), , drop = FALSE]
+  nw <- .workers(r)
+  if (!nrow(r) || max(nw) <= 1) return(NA_real_)
+  m1 <- mean(r$marginalGiB[nw == 1])
+  (mean(r$marginalGiB[nw == max(nw)]) / m1 - 1) / (max(nw) - 1)
+}
+
+#' One step's fit as rows of `cost/fits.csv`
+#'
+#' One row for the pooled fit, plus one per measured regime side (`side` "below"/"above" of the
+#' note's boundary). Exponents are in note syntax; a driver that was not varied is left out.
+#' `r` is the measured worker ratio when `k` is NA and the rows have a worker axis.
+#' @param fit Result of [fitStepCost()] for `rows`.
+#' @param step,backend,metric,cpuModel,moduleVersion Identify the fit; `metric` is "memory" or "time".
+#' @param rows The rows `fit` was made from.
+#' @param note One-row scaling note given to [fitStepCost()], or NULL.
+#' @return A data.frame with the columns of `cost/fits.csv`.
+#' @export
+fitRecord <- function(fit, step, backend, metric, cpuModel, moduleVersion, rows, note = NULL) {
+  if (is.null(backend) || is.na(backend)) backend <- ""
+  rows <- as.data.frame(rows, stringsAsFactors = FALSE)
+  if (is.null(rows$role)) rows$role <- ""
+  rows$role <- ifelse(is.na(rows$role), "", rows$role)
+  for (d in .costDriverNames) if (is.null(rows[[d]])) rows[[d]] <- NA_real_
+  flags <- setdiff(fit$flags, c("disagrees with note", if (metric == "time") "worker term not measured"))
+  if (any(fit$checks$metric == metric & fit$checks$status == "disagrees"))
+    flags <- c(flags, "disagrees with note")
+  isMem <- metric == "memory"
+  workerMax <- if (nrow(rows)) max(.workers(rows)) else NA_real_
+  one <- function(part, side) {
+    e <- part$exponents[!is.na(part$exponents)]
+    data.frame(step = step, backend = backend, metric = metric, cpuModel = cpuModel,
+               moduleVersion = moduleVersion, side = side, a = part$a,
+               exponents = if (length(e)) paste0(names(e), "^", signif(e, 3), collapse = " ") else "",
+               k = if (isMem) fit$k else NA_real_, w = if (isMem) fit$w else NA_real_,
+               r = if (isMem && is.na(fit$k)) .workerRatio(rows) else NA_real_,
+               s = if (isMem) NA_real_ else fit$s, nRows = part$n,
+               driverRange = .driverRange(part$used, names(e)),
+               workerMax = workerMax, flags = paste(flags, collapse = "; "),
+               date = as.character(Sys.Date()), stringsAsFactors = FALSE)
+  }
+  out <- list(one(fit[[metric]], ""))
+  bd <- if (is.null(note)) "" else note$boundaryDriver
+  bv <- if (is.null(note)) NA_real_ else suppressWarnings(as.numeric(note$boundaryValue))
+  sides <- fit$regimes[[metric]]
+  if (!is.null(sides) && nzchar(bd) && !is.na(bv)) {
+    if (!is.null(sides$lower)) out <- c(out, list(one(sides$lower, "below")))
+    if (!is.null(sides$upper)) out <- c(out, list(one(sides$upper, "above")))
+  }
+  out <- do.call(rbind, out)
+  out <- out[, .fitsColumns, drop = FALSE]
+  rownames(out) <- NULL
+  out
 }

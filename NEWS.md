@@ -1,3 +1,13 @@
+# spadesBioInfo.core 0.1.53
+
+* `predictStepCost()`: one step's peak memory and time for planned drivers, from the step's cost
+  folder, with a basis label, flags and, for extrapolations, a range.
+* `costReport()` and its print method: a planning report over a list of steps, with what-ifs,
+  baselines, whether each step fits the memory budget, and a summary.
+* `fitRecord()` and `readCostFits()`: persist fits as `cost/fits.csv`.
+* `parseExponents()`: the one parser of note exponent strings.
+* `renderCostScaling()`: a `### Fitted curves` table and figures when the cost folder has `fits.csv`.
+
 # spadesBioInfo.core 0.1.52
 
 * `runBenchmarkLadder()`: only the first point runs without an estimate; a later point with no
