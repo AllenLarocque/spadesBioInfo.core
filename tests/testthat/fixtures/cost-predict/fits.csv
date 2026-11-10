@@ -1,0 +1,3 @@
+step,backend,metric,cpuModel,moduleVersion,side,a,exponents,k,w,r,s,nRows,driverRange,workerMax,flags,date
+x,,memory,(all),1.0.0,,1e-8,taxa^2,,,,,7,taxa=1000:4000,8,,2026-11-09
+x,,time,cpuA,1.0.0,,2e-5,taxa^2,,,,,7,taxa=1000:4000,8,,2026-11-09

@@ -154,3 +154,88 @@ test_that("module-level row renders under its own heading", {
   expect_lt(regexpr("### Module total", txt, fixed = TRUE),
             regexpr("`myMod/x`", txt, fixed = TRUE))
 })
+
+# ---- fitted curves and figures ----
+
+fitRow <- function(...) {
+  r <- list(step = "myMod/sweep", backend = "", metric = "memory", cpuModel = "(all)",
+            moduleVersion = "0.1.0", side = "", a = 2, exponents = "taxa^2 samples^1", k = 0.5,
+            w = 1.25, r = NA_real_, s = NA_real_, nRows = 9, driverRange = "taxa=100:900",
+            workerMax = 4, flags = "drivers interact", date = "2026-11-09")
+  a <- list(...)
+  for (n in names(a)) r[[n]] <- a[[n]]
+  as.data.frame(r, stringsAsFactors = FALSE)
+}
+withFits <- function(rows, figures = character(), name = "myMod", figDir = c("cost", "figures")) {
+  dir <- modWithReadme(list(mkRow(step = "myMod/sweep", memory = "taxa^2 samples^1")), "# x\n", name)
+  if (length(rows)) utils::write.csv(do.call(rbind, rows), file.path(dir, "cost", "fits.csv"),
+                                     row.names = FALSE)
+  fd <- do.call(file.path, as.list(c(dir, figDir)))
+  if (length(figures)) dir.create(fd, recursive = TRUE)
+  for (f in figures) file.create(file.path(fd, f))
+  dir
+}
+readmeLines <- function(dir) readLines(file.path(dir, "README.md"), encoding = "UTF-8")
+
+test_that("fits.csv adds a Fitted curves table after Steps, with an image line per PNG", {
+  dir <- withFits(list(fitRow(), fitRow(metric = "time", cpuModel = "cpuA", k = NA, w = NA, s = 0.2,
+                                        exponents = "taxa^2", side = "below")),
+                  c("myMod__sweep__all__memory.png", "myMod__sweep__all__time.png"))
+  renderCostScaling(dir)
+  txt <- paste(readmeLines(dir), collapse = "\n")
+  expect_match(txt, "### Fitted curves", fixed = TRUE)
+  expect_lt(regexpr("### Steps", txt, fixed = TRUE), regexpr("### Fitted curves", txt, fixed = TRUE))
+  expect_match(txt, "| Step | Backend | Metric | CPU | Version | Side | Exponents | k | w or r | s | Measured range | Flags |",
+               fixed = TRUE)
+  expect_match(txt, "| `myMod/sweep` | all | memory | (all) | 0.1.0 | - | grows with taxa² × samples | 0.5 | 1.25 | - | taxa=100:900 | drivers interact |",
+               fixed = TRUE)
+  expect_match(txt, "| time | cpuA | 0.1.0 | below | grows with taxa² | - | - | 0.2 |", fixed = TRUE)
+  expect_match(txt, "![myMod__sweep__all__memory](cost/figures/myMod__sweep__all__memory.png)", fixed = TRUE)
+  expect_match(txt, "![myMod__sweep__all__time](cost/figures/myMod__sweep__all__time.png)", fixed = TRUE)
+  expect_lt(regexpr("### Fitted curves", txt, fixed = TRUE), regexpr("![myMod__sweep__all__memory]", txt, fixed = TRUE))
+})
+
+test_that("w or r shows r when w is blank", {
+  dir <- withFits(list(fitRow(k = NA, w = NA, r = 0.75)))
+  renderCostScaling(dir)
+  expect_match(paste(readmeLines(dir), collapse = "\n"), "| - | 0.75 | - |", fixed = TRUE)
+})
+
+test_that("core's figures link inst/cost/figures", {
+  dir <- file.path(tempfile("p"), "core-clone")
+  dir.create(file.path(dir, "inst", "cost", "figures"), recursive = TRUE)
+  writeLines("Package: spadesBioInfo.core", file.path(dir, "DESCRIPTION"))
+  cd <- file.path(dir, "inst", "cost")
+  utils::write.csv(mkRow(step = "core/buildPdistBig", time = "taxa^2"), file.path(cd, "scaling.csv"),
+                   row.names = FALSE)
+  utils::write.csv(fitRow(step = "core/buildPdistBig"), file.path(cd, "fits.csv"), row.names = FALSE)
+  file.create(file.path(cd, "figures", "core__buildPdistBig__all__memory.png"))
+  renderCostScaling(dir, cd)
+  txt <- paste(readmeLines(dir), collapse = "\n")
+  expect_match(txt, "(inst/cost/figures/core__buildPdistBig__all__memory.png)", fixed = TRUE)
+  expect_false(grepl("(cost/figures/", sub("inst/cost/figures/", "", txt, fixed = TRUE), fixed = TRUE))
+})
+
+test_that("a custom figures folder is linked relative to dir", {
+  dir <- withFits(list(fitRow()), "a.png", figDir = c("pics"))
+  renderCostScaling(dir, figures = file.path(dir, "pics"))
+  expect_match(paste(readmeLines(dir), collapse = "\n"), "![a](pics/a.png)", fixed = TRUE)
+})
+
+test_that("without fits.csv the section is exactly what it was before fits existed", {
+  # golden text produced by the renderer before this change, from these two note rows
+  golden <- c("<!-- cost-scaling:start -->", "## Cost & Scaling", "", "### Steps", "",
+    "| Step | Backend | Memory | Time | Why | Setting | Source | Confidence |",
+    "|---|---|---|---|---|---|---|---|",
+    "| `myMod/sweep` | all | grows with taxa² × samples | grows with taxa² | pairs | nTop | code | code |",
+    "| `myMod/other` | b | - | grows with samples | - | - | - | code |", "",
+    "<!-- cost-scaling:end -->")
+  dir <- modWithReadme(list(mkRow(step = "myMod/sweep", memory = "taxa^2 samples^1", time = "taxa^2",
+                                  why = "pairs", knob = "nTop", source = "code"),
+                            mkRow(step = "myMod/other", backend = "b", time = "samples^1")), "")
+  # PNGs alone, without fits.csv, add nothing
+  dir.create(file.path(dir, "cost", "figures"))
+  file.create(file.path(dir, "cost", "figures", "x.png"))
+  renderCostScaling(dir)
+  expect_identical(readmeLines(dir), golden)
+})

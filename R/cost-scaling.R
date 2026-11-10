@@ -7,6 +7,18 @@
 .scalingStart <- "<!-- cost-scaling:start -->"
 .scalingEnd <- "<!-- cost-scaling:end -->"
 
+#' Read exponents written in note syntax
+#'
+#' @param x One string such as `"taxa^2 samples^0.54"`; blank or NA gives no exponents.
+#' @return Named numeric vector, `c(taxa = 2, samples = 0.54)`; `numeric(0)` when blank.
+#' @export
+parseExponents <- function(x) {
+  if (is.null(x) || length(x) != 1L || is.na(x) || !nzchar(trimws(x))) return(numeric(0))
+  t <- strsplit(trimws(x), " ", fixed = TRUE)[[1]]
+  t <- t[nzchar(t)]
+  stats::setNames(suppressWarnings(as.numeric(sub("^.*\\^", "", t))), sub("\\^.*$", "", t))
+}
+
 # Problems with one exponent string ("taxa^2 samples^1"); character(0) when valid.
 .exponentProblems <- function(x) {
   if (!nzchar(x)) return(character(0))
@@ -20,7 +32,7 @@
   if (length(bad))
     return(paste0("unknown driver '", bad[1], "'; allowed: ",
                   paste(.costDriverNames, collapse = ", ")))
-  if (any(is.na(suppressWarnings(as.numeric(sub("^.*\\^", "", terms))))))
+  if (anyNA(parseExponents(x)))
     return(paste0("'", x, "' has a non-numeric exponent"))
   character(0)
 }
@@ -92,13 +104,11 @@ scalingNoteFor <- function(notes, step, backend = NA) {
 .exponentWords <- function(x) {
   if (!nzchar(x)) return("")
   sup <- c("1" = "", "2" = "²", "3" = "³")
-  terms <- strsplit(x, " ", fixed = TRUE)[[1]]
-  terms <- terms[nzchar(terms)]
-  w <- vapply(terms, function(t) {
-    drv <- sub("\\^.*$", "", t)
-    e <- as.character(as.numeric(sub("^.*\\^", "", t)))
-    if (e %in% names(sup)) paste0(drv, sup[[e]]) else paste0(drv, "^", e)
-  }, character(1), USE.NAMES = FALSE)
+  e <- parseExponents(x)
+  w <- vapply(seq_along(e), function(i) {
+    ch <- as.character(e[[i]])
+    if (ch %in% names(sup)) paste0(names(e)[i], sup[[ch]]) else paste0(names(e)[i], "^", ch)
+  }, character(1))
   paste("grows with", paste(w, collapse = " × "))
 }
 
@@ -115,6 +125,31 @@ scalingNoteFor <- function(notes, step, backend = NA) {
     txt <- paste0(txt, " (", r$regimeEffect, " at ", r$boundaryDriver, at, ")")
   }
   txt
+}
+
+# Fitted-curves table: one row per row of fits.csv.
+.fitsTable <- function(f) {
+  head <- c("| Step | Backend | Metric | CPU | Version | Side | Exponents | k | w or r | s | Measured range | Flags |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|")
+  num <- function(x) if (is.na(x)) "" else as.character(signif(x, 3))
+  rows <- vapply(seq_len(nrow(f)), function(i) {
+    r <- f[i, ]
+    wr <- if (!is.na(r$w)) r$w else r$r
+    cells <- c(paste0("`", r$step, "`"), if (nzchar(r$backend)) r$backend else "all", r$metric,
+               r$cpuModel, r$moduleVersion, r$side, .exponentWords(r$exponents), num(r$k), num(wr),
+               num(r$s), r$driverRange, r$flags)
+    paste0("| ", paste(vapply(cells, .mdCell, character(1)), collapse = " | "), " |")
+  }, character(1))
+  c(head, rows)
+}
+
+# One image line per PNG in `figures`, linked relative to `dir`.
+.figureLines <- function(dir, figures) {
+  pngs <- sort(list.files(figures, "\\.png$"))
+  if (!length(pngs)) return(character(0))
+  rel <- sub("^/", "", sub(normalizePath(dir, mustWork = FALSE), "",
+                           normalizePath(figures, mustWork = FALSE), fixed = TRUE))
+  c(paste0("![", sub("\\.png$", "", pngs), "](", file.path(rel, pngs), ")"), "")
 }
 
 .scalingTable <- function(d) {
@@ -138,10 +173,12 @@ scalingNoteFor <- function(notes, step, backend = NA) {
 #'   as a pointer to the core README, except in core itself: a `DESCRIPTION` with
 #'   `Package: spadesBioInfo.core`, or with no `DESCRIPTION`, the basename `spadesBioInfo.core`.
 #' @param costDir Folder holding `scaling.csv`.
-#' @param figures Unused until wave 3.
+#' @param figures Folder of PNG figures. When `<costDir>/fits.csv` exists, the section gets a
+#'   "Fitted curves" table and one image line per PNG here, linked relative to `dir`.
 #' @return The README path, invisibly.
 #' @export
-renderCostScaling <- function(dir, costDir = file.path(dir, "cost"), figures = NULL) {
+renderCostScaling <- function(dir, costDir = file.path(dir, "cost"),
+                              figures = file.path(costDir, "figures")) {
   notes <- readScalingNotes(file.path(costDir, "scaling.csv"))
   modName <- basename(normalizePath(dir, mustWork = FALSE))
   # core/ rows point to core's README, except in core's own README (by DESCRIPTION, else by name)
@@ -157,6 +194,11 @@ renderCostScaling <- function(dir, costDir = file.path(dir, "cost"), figures = N
     lines <- c(lines, "### Module total", "", .scalingTable(notes[isTotal, ]), "")
   steps <- notes[!isCore & !isTotal, ]
   if (nrow(steps)) lines <- c(lines, "### Steps", "", .scalingTable(steps), "")
+  fitsFile <- file.path(costDir, "fits.csv")
+  if (file.exists(fitsFile)) {
+    fits <- readCostFits(fitsFile)
+    lines <- c(lines, "### Fitted curves", "", .fitsTable(fits), "", .figureLines(dir, figures))
+  }
   section <- paste0(paste(c(lines, .scalingEnd), collapse = "\n"))
 
   path <- file.path(dir, "README.md")
