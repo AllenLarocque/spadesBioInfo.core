@@ -1,0 +1,3 @@
+"step","backend","metric","cpuModel","moduleVersion","side","a","exponents","k","w","r","s","nRows","driverRange","workerMax","flags","date"
+"core/buildPdistBig","","memory","(all)","0.1.52","",0.0127476087129219,"taxa^0.258",NA,NA,1.65547654518822,NA,3,"taxa=6890:27558",8,"worker term not measured","2026-11-10"
+"core/buildPdistBig","","time","13th Gen Intel(R) Core(TM) i7-13700KF","0.1.52","",8.13638089780578e-08,"taxa^2.4",NA,NA,NA,0.245378080888316,3,"taxa=6890:27558",8,"","2026-11-10"

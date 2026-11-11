@@ -30,7 +30,8 @@ test_that("one entry gives one plan row equal to predictStepCost", {
 })
 
 test_that("whatIf nworker = c(1, 8) gives the plan row and one row per value", {
-  r <- costReport(list(taxa = 2000), list(.ent()), whatIf = list(nworker = c(1, 8)), budget = 100)
+  e <- .ent(); e$drivers <- list(nworker = 1)
+  r <- costReport(list(taxa = 2000), list(e), whatIf = list(nworker = c(1, 8)), budget = 100)
   expect_equal(r$whatIf, c("plan", "nworker=1", "nworker=8"))
   expect_match(r$drivers[3], "nworker=8", fixed = TRUE)
   expect_match(r$flags[3], "worker term not measured", fixed = TRUE)
@@ -128,14 +129,14 @@ test_that("a module entry adds its overhead from the records module row", {
   expect_length(attr(r, "summary")$timeUnknown, 0)
 })
 
-test_that("a module entry with no module row is time-unknown and print says at least", {
+test_that("a module entry with no module row is time-unknown and print says so", {
   m <- .ent("mod"); m$module <- "mod"
   r <- costReport(list(taxa = 1000), list(m, .ent("x")), budget = 100)
   expect_equal(r$basis[1], "no data")
   expect_true(is.na(r$timeSec[1]))
   expect_equal(attr(r, "summary")$timeUnknown, "mod")
   expect_equal(attr(r, "summary")$totalTimeSec, 20)
-  expect_match(paste(capture.output(print(r)), collapse = "\n"), "at least", fixed = TRUE)
+  expect_match(paste(capture.output(print(r)), collapse = "\n"), "steps with no time not counted", fixed = TRUE)
 })
 
 test_that("a run baseline beats the benchmark median, which beats nothing", {
@@ -175,6 +176,8 @@ test_that("print shows the summary lines and the table", {
   expect_match(out, "Largest peak", fixed = TRUE)
   expect_match(out, "Total time", fixed = TRUE)
   expect_match(out, "peak (low", fixed = TRUE)
+  expect_match(out, "baseline", fixed = TRUE)
+  expect_match(out, "0.005", fixed = TRUE)
   expect_match(out, "FALSE")
 })
 
@@ -192,7 +195,8 @@ test_that("a plan entry cannot supply a data driver that dims lacks", {
 
 test_that("module entries get no what-if rows", {
   m <- .ent("mod"); m$module <- "mod"
-  r <- costReport(list(taxa = 2000, ranks = c(Genus = 10)), list(m, .ent()),
+  x <- .ent(); x$drivers <- list(nworker = 1)
+  r <- costReport(list(taxa = 2000, ranks = c(Genus = 10)), list(m, x),
                   whatIf = list(nworker = c(1, 8), ranks = "Genus"), budget = 100)
   expect_equal(sum(r$step == "mod"), 1L)
   expect_equal(sum(r$step == "x"), 4L)
@@ -224,7 +228,7 @@ test_that("an all-NA alternative group warns of nothing and is time-unknown", {
   expect_setequal(s$timeUnknown, c("nofit", "nofit2"))
 })
 
-test_that("cheapestFit with no usable time says none fits, without error", {
+test_that("cheapestFit names a fitting what-if whose time is unknown, without error", {
   d <- .crDir(.runRow(baselineGiB = 0.005))
   # step y has no fits and no scaling-exponent drivers missing: run record gives it a time,
   # so blank the time through a step with a peak but no time: fit only memory
@@ -234,7 +238,7 @@ test_that("cheapestFit with no usable time says none fits, without error", {
                                     whatIf = list(ranks = "Genus"), budget = 0.01))
   expect_true(is.na(r$timeSec[2]))
   expect_true(r$fits[2])
-  expect_equal(attr(r, "summary")$cheapestFit[["x"]], "none of the what-ifs fits")
+  expect_equal(attr(r, "summary")$cheapestFit[["x"]], "ranks=Genus (time unknown)")
 })
 
 test_that("an entry with NA invocations is time-unknown", {
@@ -243,5 +247,41 @@ test_that("an entry with NA invocations is time-unknown", {
   s <- attr(r, "summary")
   expect_equal(s$totalTimeSec, 10)
   expect_equal(s$timeUnknown, "x")
-  expect_match(paste(capture.output(print(r)), collapse = "\n"), "at least", fixed = TRUE)
+  expect_match(paste(capture.output(print(r)), collapse = "\n"), "steps with no time not counted", fixed = TRUE)
+})
+
+test_that("a step without a driver gets no what-if row for it; data drivers and ranks apply to all", {
+  w <- .ent("x"); w$drivers <- list(nworker = 1)
+  r <- costReport(list(taxa = 2000, ranks = c(Genus = 10)), list(.ent("x"), w),
+                  whatIf = list(nworker = 8, taxa = 4000, ranks = "Genus"), budget = 100)
+  expect_equal(sum(r$whatIf == "nworker=8"), 1L)
+  expect_match(r$drivers[r$whatIf == "nworker=8"], "nworker=8", fixed = TRUE)
+  expect_equal(sum(r$whatIf == "taxa=4000"), 2L)
+  expect_equal(sum(r$whatIf == "ranks=Genus"), 2L)
+})
+
+test_that("print puts each row on one line and does not pad numbers to a shared width", {
+  d <- .crDir(.runRow(baselineGiB = 0.005))
+  e <- .ent(d = d); e$drivers <- list(nworker = 1)
+  r <- costReport(list(taxa = 2000), list(e), whatIf = list(nworker = c(1, 8, 64)), budget = 0.01)
+  old <- options(width = 40); on.exit(options(old))
+  out <- capture.output(print(r))
+  tab <- out[grep("^ ?step", out):length(out)]
+  expect_length(tab, 1L + nrow(r))
+  expect_equal(getOption("width"), 40)
+  expect_false(any(grepl("0\\.0400+[^0-9]", out)))
+})
+
+test_that("print adds the regime and a missing driver to the basis, and nothing when they are NA", {
+  d <- .crDir(.runRow(baselineGiB = 0.005))
+  r <- costReport(list(taxa = 2000), list(.ent(d = d)), budget = 100)
+  r$regime <- "upper bound"
+  out <- paste(capture.output(print(r)), collapse = "\n")
+  expect_match(out, "measured; upper bound", fixed = TRUE)
+  r$regime <- NA; r$basis <- "no data"; r$missing <- "sequences"
+  out <- paste(capture.output(print(r)), collapse = "\n")
+  expect_match(out, "no data (needs sequences)", fixed = TRUE)
+  r$missing <- NA
+  out <- paste(capture.output(print(r)), collapse = "\n")
+  expect_false(grepl("needs|; NA|NA)", out))
 })

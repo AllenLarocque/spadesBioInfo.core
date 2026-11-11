@@ -250,7 +250,7 @@ fitRecord <- function(fit, step, backend, metric, cpuModel, moduleVersion, rows,
     e <- part$exponents[!is.na(part$exponents)]
     data.frame(step = step, backend = backend, metric = metric, cpuModel = cpuModel,
                moduleVersion = moduleVersion, side = side, a = part$a,
-               exponents = if (length(e)) paste0(names(e), "^", signif(e, 3), collapse = " ") else "",
+               exponents = if (length(e)) paste0(names(e), "^", signif(e, 6), collapse = " ") else "",
                k = if (isMem) fit$k else NA_real_, w = if (isMem) fit$w else NA_real_,
                r = if (isMem && is.na(fit$k)) .workerRatio(rows) else NA_real_,
                s = if (isMem) NA_real_ else fit$s, nRows = part$n,

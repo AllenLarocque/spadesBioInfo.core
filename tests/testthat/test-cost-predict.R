@@ -106,13 +106,43 @@ test_that("a driver the report cannot fill gives no data and names it", {
 
 test_that("a run record near the request confirms the curve, but only at the same workers", {
   rec <- data.frame(step = "x", source = "run", computed = TRUE, taxa = 2100, nworker = 1,
-                    backend = NA, marginalGiB = 1, elapsedSec = 1)
+                    backend = NA, marginalGiB = 0.044, elapsedSec = 88)   # curve: 0.04 GiB, 80 s
   expect_equal(.pc(list(taxa = 2000), records = rec)$basis, "run-confirmed")
-  expect_equal(.pc(list(taxa = 16000), records = transform(rec, taxa = 15000))$basis, "run-confirmed")
+  expect_equal(.pc(list(taxa = 16000), records = transform(rec, taxa = 15000, marginalGiB = 2.4,
+                                                           elapsedSec = 5000))$basis, "run-confirmed")
   expect_equal(.pc(list(taxa = 2000, nworker = 2), records = rec)$basis, "measured")
   expect_equal(.pc(list(taxa = 2000), records = transform(rec, taxa = 3000))$basis, "measured")
   expect_equal(.pc(list(taxa = 2000), records = transform(rec, source = "benchmark"))$basis, "measured")
   expect_equal(.pc(list(taxa = 2000), records = transform(rec, computed = FALSE))$basis, "measured")
+})
+
+test_that("a nearby run that measured outside the range does not confirm the curve", {
+  rec <- data.frame(step = "x", source = "run", computed = TRUE, taxa = 2100, nworker = 1,
+                    backend = NA, marginalGiB = 1, elapsedSec = 80)   # memory 25x the curve's 0.04
+  p <- .pc(list(taxa = 2000), records = rec)
+  expect_equal(p$basis, "measured")
+  expect_match(p$flags, "a nearby run differs from the curve", fixed = TRUE)
+  p <- .pc(list(taxa = 8000), records = transform(rec, taxa = 8000, marginalGiB = 0.64, elapsedSec = 1))
+  expect_equal(p$basis, "extrapolated ×2")
+  expect_true(p$peakHigh > p$peakLow)
+})
+
+test_that("a request below the measured range is extrapolated", {
+  p <- .pc(list(taxa = 500))
+  expect_equal(p$basis, "extrapolated ×2")
+  expect_true(p$timeHigh > p$timeLow)
+})
+
+test_that("a step that uses no workers (workerMax 1) is not extrapolated by nworker", {
+  d <- .pcDir(function(f) { f$workerMax <- 1; f })
+  expect_equal(.pc(list(taxa = 2000, nworker = 4), d)$basis, "measured")
+})
+
+test_that("a negative w never takes the peak below the data term", {
+  d <- .pcDir(.set("memory", k = 0, w = -1))
+  p <- .pc(list(taxa = 2000, nworker = 8), d)
+  expect_equal(p$peakGiB, 0.04)
+  expect_true(p$peakLow <= p$peakHigh)
 })
 
 test_that("a step with no fit scales its nearest run record by the note", {
@@ -199,7 +229,7 @@ test_that("a named backend uses its own fit and ignores the blank-backend one", 
 test_that("a run record of another backend does not confirm the curve", {
   d <- .pcDir(function(f) { b <- f; b$backend <- "b1"; rbind(f, b) })
   rec <- data.frame(step = "x", source = "run", computed = TRUE, taxa = 2000, nworker = 1,
-                    backend = "b1", marginalGiB = 1, elapsedSec = 1)
+                    backend = "b1", marginalGiB = 0.04, elapsedSec = 80)
   expect_equal(.pc(list(taxa = 2000), d, backend = "b1", records = rec)$basis, "run-confirmed")
   expect_equal(.pc(list(taxa = 2000), d, backend = "b1", records = transform(rec, backend = "b2"))$basis,
                "measured")

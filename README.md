@@ -32,4 +32,14 @@ a `release/v<version>` PR on the standalone repo (since 2026-10-12, PR #76; it n
 |---|---|---|---|---|---|---|---|
 | `core/buildPdistBig` | all | - | grows with taxa² | Builds the full taxa x taxa phylogenetic distance as a file-backed bigmemory matrix, so disk is 8 x taxa^2 bytes (code); time grows with taxa^2 because every pair is summed over its two root paths (derived). It slows sharply when the file is larger than free memory or sits on a network file system. Measured on the 16S probe (2026-08-11, 48-sample tree, two points, 14,832 and 44,497 tips): time O(n^2.23), memory O(n^2.00); at 44,497 tips the build took 47.7 min with a 15.85 GB matrix and a 48.9 GB process peak (measured; that probe used decimal GB). Scope is the distance build of the 8 matrix-bound metrics (mpd, mntd and their ses and abundance-weighted forms); Faith's PD (faith_pd, ses_faith_pd) needs the tree only, O(n) memory (code). | put cachePath on local disk (the distance work dir lives under it) | iCAMP 1.9.1.9001 (AllenLarocque/iCAMP@b27bb7b) pdist.big(): big.matrix(nrow = tip.num, ncol = tip.num, type = "double") line 189, pairwise fill line 208 of deparse(iCAMP::pdist.big); called from spadesBioInfo.core 0.1.51 R/subset-phylo-dist.R:46-47; probe: modules/calcPhyloDiversity/README.md history (section removed in favour of this note), docs/superpowers/results/2026-08-12-phylo-metric-scaling-and-package-options.md | derived |
 
+### Fitted curves
+
+| Step | Backend | Metric | CPU | Version | Side | Exponents | k | w or r | s | Measured range | Flags |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `core/buildPdistBig` | all | memory | (all) | 0.1.52 | - | grows with taxa^0.258 | - | 1.66 | - | taxa=6890:27558 | worker term not measured |
+| `core/buildPdistBig` | all | time | 13th Gen Intel(R) Core(TM) i7-13700KF | 0.1.52 | - | grows with taxa^2.4 | - | - | 0.245 | taxa=6890:27558 | - |
+
+![core__buildPdistBig__all__memory](inst/cost/figures/core__buildPdistBig__all__memory.png)
+![core__buildPdistBig__all__time](inst/cost/figures/core__buildPdistBig__all__time.png)
+
 <!-- cost-scaling:end -->

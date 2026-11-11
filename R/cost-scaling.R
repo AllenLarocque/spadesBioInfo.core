@@ -106,7 +106,7 @@ scalingNoteFor <- function(notes, step, backend = NA) {
   sup <- c("1" = "", "2" = "²", "3" = "³")
   e <- parseExponents(x)
   w <- vapply(seq_along(e), function(i) {
-    ch <- as.character(e[[i]])
+    ch <- as.character(signif(e[[i]], 3))   # fits.csv keeps 6 digits; show 3
     if (ch %in% names(sup)) paste0(names(e)[i], sup[[ch]]) else paste0(names(e)[i], "^", ch)
   }, character(1))
   paste("grows with", paste(w, collapse = " × "))
